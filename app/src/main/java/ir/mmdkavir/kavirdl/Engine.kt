@@ -27,6 +27,8 @@ object Prefs {
     fun setConfig(c: Context, v: String) = sp(c).edit().putString("cfg", v).apply()
     fun proxyOn(c: Context): Boolean = sp(c).getBoolean("proxy", true)
     fun setProxyOn(c: Context, v: Boolean) = sp(c).edit().putBoolean("proxy", v).apply()
+    fun cookies(c: Context): String = sp(c).getString("cookies", "") ?: ""
+    fun setCookies(c: Context, v: String) = sp(c).edit().putString("cookies", v).apply()
     fun audioOnly(c: Context): Boolean = sp(c).getBoolean("audio", false)
     fun setAudioOnly(c: Context, v: Boolean) = sp(c).edit().putBoolean("audio", v).apply()
 }
@@ -87,6 +89,7 @@ class MainVM(app: Application) : AndroidViewModel(app) {
 
     var cfg by mutableStateOf(Prefs.config(app))
     var proxyOn by mutableStateOf(Prefs.proxyOn(app))
+    var cookies by mutableStateOf(Prefs.cookies(app))
     var settingsMsg by mutableStateOf("")
     var settingsBusy by mutableStateOf(false)
 
@@ -228,6 +231,12 @@ class MainVM(app: Application) : AndroidViewModel(app) {
             req.addOption("-S", "res:1080,vcodec:h264,acodec:m4a")
             req.addOption("--merge-output-format", "mp4")
         }
+        req.addOption("--extractor-args", "youtube:player_client=android_vr,tv_simply,ios,mweb")
+        if (cookies.isNotBlank()) {
+            val cf = File(ctx.cacheDir, "cookies.txt")
+            cf.writeText(cookies.trim() + "\n")
+            req.addOption("--cookies", cf.absolutePath)
+        }
         val port = Net.proxyPort
         if (port > 0) req.addOption("--proxy", "socks5h://127.0.0.1:$port")
         val pid = "kdl-${System.nanoTime()}"
@@ -326,6 +335,11 @@ class MainVM(app: Application) : AndroidViewModel(app) {
                 settingsBusy = false
             }
         }
+    }
+
+    fun saveCookies() {
+        Prefs.setCookies(ctx, cookies.trim())
+        settingsMsg = if (cookies.isBlank()) "کوکی پاک شد" else "کوکی ذخیره شد"
     }
 
     fun updateYtdlp() {

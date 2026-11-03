@@ -327,6 +327,21 @@ fun SettingsScreen(vm: MainVM) {
         }
         if (vm.settingsMsg.isNotBlank()) Text(vm.settingsMsg, style = MaterialTheme.typography.bodyMedium)
         HorizontalDivider()
+        Text("کوکی یوتیوب (اختیاری)", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "اگه خطای Sign in to confirm you're not a bot گرفتی، فایل cookies.txt (فرمت Netscape) مرورگرت رو اینجا paste کن.",
+            style = MaterialTheme.typography.bodySmall
+        )
+        OutlinedTextField(
+            value = vm.cookies,
+            onValueChange = { vm.cookies = it },
+            label = { Text("cookies.txt") },
+            minLines = 3,
+            maxLines = 6,
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedButton(onClick = { vm.saveCookies() }) { Text("ذخیره کوکی") }
+        HorizontalDivider()
         Text("موتور دانلود", style = MaterialTheme.typography.titleMedium)
         Text(
             "اگه یوتیوب یا اینستا یهو کار نکرد، yt-dlp رو به‌روزرسانی کن.",
