@@ -27,6 +27,10 @@ object Prefs {
     fun setConfig(c: Context, v: String) = sp(c).edit().putString("cfg", v).apply()
     fun proxyOn(c: Context): Boolean = sp(c).getBoolean("proxy", true)
     fun setProxyOn(c: Context, v: Boolean) = sp(c).edit().putBoolean("proxy", v).apply()
+    fun str(c: Context, k: String, d: String = ""): String = sp(c).getString(k, d) ?: d
+    fun setStr(c: Context, k: String, v: String) = sp(c).edit().putString(k, v).apply()
+    fun bool(c: Context, k: String, d: Boolean): Boolean = sp(c).getBoolean(k, d)
+    fun setBool(c: Context, k: String, v: Boolean) = sp(c).edit().putBoolean(k, v).apply()
     fun cookies(c: Context): String = sp(c).getString("cookies", "") ?: ""
     fun setCookies(c: Context, v: String) = sp(c).edit().putString("cookies", v).apply()
     fun audioOnly(c: Context): Boolean = sp(c).getBoolean("audio", false)
@@ -90,6 +94,11 @@ class MainVM(app: Application) : AndroidViewModel(app) {
     var cfg by mutableStateOf(Prefs.config(app))
     var proxyOn by mutableStateOf(Prefs.proxyOn(app))
     var cookies by mutableStateOf(Prefs.cookies(app))
+    var ghOn by mutableStateOf(Prefs.bool(app, "ghOn", false))
+    var ghRepo by mutableStateOf(Prefs.str(app, "ghRepo", "MmdKavir22/YT-Kavir"))
+    var ghToken by mutableStateOf(Prefs.str(app, "ghToken"))
+    var ghQuality by mutableStateOf(Prefs.str(app, "ghQuality", "720"))
+    var ghDelete by mutableStateOf(Prefs.bool(app, "ghDelete", true))
     var settingsMsg by mutableStateOf("")
     var settingsBusy by mutableStateOf(false)
 
@@ -178,6 +187,12 @@ class MainVM(app: Application) : AndroidViewModel(app) {
         var lastError = ""
 
         when {
+            ghOn && ghToken.isNotBlank() && ghRepo.contains("/") && GhActions.isYoutube(link) -> {
+                GhActions.download(
+                    ghRepo.trim(), ghToken.trim(), ghQuality.trim().ifEmpty { "720" }, ghDelete,
+                    link, audioOnly, dir, { setStatus(it) }, { progress = it }
+                )
+            }
             Spotify.isSpotify(link) -> {
                 setStatus("گرفتن لیست آهنگ‌ها...")
                 val tracks = Spotify.resolve(link)
@@ -335,6 +350,15 @@ class MainVM(app: Application) : AndroidViewModel(app) {
                 settingsBusy = false
             }
         }
+    }
+
+    fun saveGh() {
+        Prefs.setBool(ctx, "ghOn", ghOn)
+        Prefs.setStr(ctx, "ghRepo", ghRepo.trim())
+        Prefs.setStr(ctx, "ghToken", ghToken.trim())
+        Prefs.setStr(ctx, "ghQuality", ghQuality.trim())
+        Prefs.setBool(ctx, "ghDelete", ghDelete)
+        settingsMsg = "تنظیمات گیت‌هاب ذخیره شد"
     }
 
     fun saveCookies() {

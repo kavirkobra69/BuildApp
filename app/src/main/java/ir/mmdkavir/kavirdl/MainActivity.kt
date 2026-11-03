@@ -75,6 +75,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -326,6 +327,45 @@ fun SettingsScreen(vm: MainVM) {
             OutlinedButton(onClick = { vm.cfg = ""; vm.saveAndTest() }, enabled = !vm.settingsBusy) { Text("پاک کردن") }
         }
         if (vm.settingsMsg.isNotBlank()) Text(vm.settingsMsg, style = MaterialTheme.typography.bodyMedium)
+        HorizontalDivider()
+        Text("دانلود یوتیوب با GitHub Actions", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "ورک‌فلوی YT-downloader توی ریپوی خودت روی گیت‌هاب اجرا می‌شه، فایل رو دانلود می‌کنه و برنامه از ریپو برمی‌داردش. توکن (PAT) باید دسترسی Contents و Actions با سطح write داشته باشه.",
+            style = MaterialTheme.typography.bodySmall
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(checked = vm.ghOn, onCheckedChange = { vm.ghOn = it })
+            Spacer(Modifier.size(8.dp))
+            Text("استفاده برای لینک‌های یوتیوب")
+        }
+        OutlinedTextField(
+            value = vm.ghRepo,
+            onValueChange = { vm.ghRepo = it },
+            label = { Text("ریپو (owner/name)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = vm.ghToken,
+            onValueChange = { vm.ghToken = it },
+            label = { Text("توکن گیت‌هاب") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = vm.ghQuality,
+            onValueChange = { vm.ghQuality = it },
+            label = { Text("کیفیت (best, 1080, 720, 480)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(checked = vm.ghDelete, onCheckedChange = { vm.ghDelete = it })
+            Spacer(Modifier.size(8.dp))
+            Text("حذف فایل از ریپو بعد از دانلود")
+        }
+        Button(onClick = { vm.saveGh() }) { Text("ذخیره تنظیمات گیت‌هاب") }
         HorizontalDivider()
         Text("کوکی یوتیوب (اختیاری)", style = MaterialTheme.typography.titleMedium)
         Text(
