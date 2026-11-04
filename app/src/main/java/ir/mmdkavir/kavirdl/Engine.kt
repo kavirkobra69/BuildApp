@@ -2,148 +2,121 @@ package ir.mmdkavir.kavirdl
 
 import android.app.Application
 import android.content.Context
-import android.widget.Toast
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.yausername.ffmpeg.FFmpeg
-import com.yausername.youtubedl_android.YoutubeDL
-import com.yausername.youtubedl_android.YoutubeDLRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 
 object Prefs {
     private fun sp(c: Context) = c.getSharedPreferences("kdl", Context.MODE_PRIVATE)
-    fun config(c: Context): String = sp(c).getString("cfg", "") ?: ""
-    fun setConfig(c: Context, v: String) = sp(c).edit().putString("cfg", v).apply()
-    fun proxyOn(c: Context): Boolean = sp(c).getBoolean("proxy", true)
-    fun setProxyOn(c: Context, v: Boolean) = sp(c).edit().putBoolean("proxy", v).apply()
     fun str(c: Context, k: String, d: String = ""): String = sp(c).getString(k, d) ?: d
     fun setStr(c: Context, k: String, v: String) = sp(c).edit().putString(k, v).apply()
-    fun bool(c: Context, k: String, d: Boolean): Boolean = sp(c).getBoolean(k, d)
-    fun setBool(c: Context, k: String, v: Boolean) = sp(c).edit().putBoolean(k, v).apply()
-    fun cookies(c: Context): String = sp(c).getString("cookies", "") ?: ""
-    fun setCookies(c: Context, v: String) = sp(c).edit().putString("cookies", v).apply()
-    fun audioOnly(c: Context): Boolean = sp(c).getBoolean("audio", false)
-    fun setAudioOnly(c: Context, v: Boolean) = sp(c).edit().putBoolean("audio", v).apply()
 }
 
-object Engine {
-    private val mutex = Mutex()
-    private var ready = false
-
-    suspend fun init(ctx: Context) {
-        mutex.withLock {
-            if (!ready) {
-                withContext(Dispatchers.IO) {
-                    YoutubeDL.getInstance().init(ctx.applicationContext)
-                    FFmpeg.getInstance().init(ctx.applicationContext)
-                }
-                ready = true
-            }
-        }
-    }
-}
-
-object ProxyCtl {
-    private var applied: String? = null
-
-    @Synchronized
-    fun ensure(ctx: Context, cfg: String): Int {
-        if (XrayManager.running() && applied == cfg) {
-            Net.proxyPort = XrayManager.port
-            return XrayManager.port
-        }
-        val port = XrayManager.start(ctx.applicationContext, cfg)
-        applied = cfg
-        Net.proxyPort = port
-        return port
-    }
-
-    @Synchronized
-    fun off() {
-        XrayManager.stop()
-        applied = null
-    }
-}
-
-class Item(val file: File, val title: String, val mime: String) {
+class Item(
+    val id: String,
+    val file: File,
+    val title: String,
+    val mime: String,
+    val src: String,
+    saved: Boolean,
+    val time: Long
+) {
     val kind: Kind = Gallery.kindOf(mime)
-    var saved by mutableStateOf(false)
+    var saved by mutableStateOf(saved)
+}
+
+object History {
+    private fun store(ctx: Context) = File(ctx.filesDir, "history.json")
+
+    fun dir(ctx: Context): File = File(ctx.filesDir, "dl").apply { mkdirs() }
+
+    fun load(ctx: Context): List<Item> {
+        val f = store(ctx)
+        if (!f.exists()) return emptyList()
+        return try {
+            val arr = JSONArray(f.readText())
+            val out = mutableListOf<Item>()
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                val file = File(dir(ctx), o.getString("file"))
+                if (file.exists()) {
+                    out += Item(
+                        o.getString("id"), file, o.getString("title"), o.getString("mime"),
+                        o.optString("src"), o.optBoolean("saved"), o.optLong("time")
+                    )
+                }
+            }
+            out
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+
+    fun write(ctx: Context, items: List<Item>) {
+        val arr = JSONArray()
+        for (it in items) {
+            arr.put(
+                JSONObject()
+                    .put("id", it.id)
+                    .put("file", it.file.name)
+                    .put("title", it.title)
+                    .put("mime", it.mime)
+                    .put("src", it.src)
+                    .put("saved", it.saved)
+                    .put("time", it.time)
+            )
+        }
+        store(ctx).writeText(arr.toString())
+    }
 }
 
 class MainVM(app: Application) : AndroidViewModel(app) {
     private val ctx: Context get() = getApplication<Application>().applicationContext
 
-    val items = mutableStateListOf<Item>()
+    val items = mutableStateListOf<Item>().also { it.addAll(History.load(app)) }
     var url by mutableStateOf("")
-    var audioOnly by mutableStateOf(Prefs.audioOnly(app))
+    var quality by mutableStateOf(Prefs.str(app, "quality", "720"))
     var status by mutableStateOf("")
     var progress by mutableStateOf(-1f)
     var busy by mutableStateOf(false)
 
-    var cfg by mutableStateOf(Prefs.config(app))
-    var proxyOn by mutableStateOf(Prefs.proxyOn(app))
-    var cookies by mutableStateOf(Prefs.cookies(app))
-    var ghOn by mutableStateOf(Prefs.bool(app, "ghOn", false))
-    var ghRepo by mutableStateOf(Prefs.str(app, "ghRepo", "MmdKavir22/YT-Kavir"))
+    var ghRepo by mutableStateOf(Prefs.str(app, "ghRepo", "kavirkobra69/BuildApp"))
     var ghToken by mutableStateOf(Prefs.str(app, "ghToken"))
-    var ghQuality by mutableStateOf(Prefs.str(app, "ghQuality", "720"))
-    var ghDelete by mutableStateOf(Prefs.bool(app, "ghDelete", true))
+    var saveMode by mutableStateOf(Prefs.str(app, "saveMode", "gallery"))
+    var treeUri by mutableStateOf(Prefs.str(app, "treeUri"))
     var settingsMsg by mutableStateOf("")
     var settingsBusy by mutableStateOf(false)
+    val versionName: String = Updater.currentVersion(app)
 
     private var job: Job? = null
-    private var processId: String? = null
 
-    fun setAudio(v: Boolean) {
-        audioOnly = v
-        Prefs.setAudioOnly(ctx, v)
-    }
-
-    fun setProxy(v: Boolean) {
-        proxyOn = v
-        Prefs.setProxyOn(ctx, v)
-        if (!v) {
-            Net.proxyPort = 0
-            ProxyCtl.off()
-        }
-    }
-
-    private fun toast(s: String) {
-        Toast.makeText(ctx, s, Toast.LENGTH_SHORT).show()
+    fun setQuality(k: String) {
+        quality = k
+        Prefs.setStr(ctx, "quality", k)
     }
 
     private fun nice(e: Throwable): String {
         val m = e.message ?: e.toString()
-        val line = m.lineSequence().lastOrNull { it.contains("ERROR", true) } ?: m.lineSequence().firstOrNull { it.isNotBlank() } ?: m
-        return line.take(220)
+        return m.lineSequence().firstOrNull { it.isNotBlank() }?.take(220) ?: m
     }
 
-    private fun applyProxy(): Int {
-        if (!proxyOn || cfg.isBlank()) {
-            Net.proxyPort = 0
-            return 0
-        }
-        return ProxyCtl.ensure(ctx, cfg.trim())
-    }
+    private suspend fun setStatus(s: String) = withContext(Dispatchers.Main) { status = s }
 
     fun cancel() {
-        processId?.let {
-            try {
-                YoutubeDL.getInstance().destroyProcessById(it)
-            } catch (_: Throwable) {
-            }
-        }
         job?.cancel()
         busy = false
         status = "لغو شد"
@@ -157,18 +130,40 @@ class MainVM(app: Application) : AndroidViewModel(app) {
             status = "لینک معتبر پیدا نشد"
             return
         }
+        if (ghToken.isBlank() || !ghRepo.contains("/")) {
+            status = "اول توی تنظیمات، ریپو و توکن گیت‌هاب رو وارد کن"
+            return
+        }
         busy = true
         progress = -1f
-        status = "آماده‌سازی..."
+        status = "شروع..."
         job = viewModelScope.launch(Dispatchers.IO) {
+            val tmp = File(ctx.cacheDir, "dl/${System.currentTimeMillis()}")
             try {
-                run(link)
+                val files = GhActions.download(
+                    ghRepo.trim(), ghToken.trim(), quality, link, tmp,
+                    { setStatus(it) }, { progress = it }
+                )
+                val stamp = System.currentTimeMillis()
+                val added = mutableListOf<Item>()
+                files.forEachIndexed { i, f ->
+                    val id = "${stamp}_$i"
+                    val dest = File(History.dir(ctx), "${id}_${f.name}")
+                    f.copyTo(dest, overwrite = true)
+                    added += Item(id, dest, f.nameWithoutExtension, Gallery.mimeOf(f), link, false, stamp)
+                }
+                withContext(Dispatchers.Main) {
+                    added.reversed().forEach { items.add(0, it) }
+                    History.write(ctx, items.toList())
+                    status = "تموم شد (${added.size} فایل)"
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
                 withContext(Dispatchers.Main) { status = "خطا: ${nice(e)}" }
             } finally {
-                withContext(Dispatchers.Main) {
+                tmp.deleteRecursively()
+                withContext(NonCancellable + Dispatchers.Main) {
                     busy = false
                     progress = -1f
                 }
@@ -176,155 +171,21 @@ class MainVM(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private suspend fun setStatus(s: String) = withContext(Dispatchers.Main) { status = s }
-
-    private suspend fun run(link: String) {
-        Engine.init(ctx)
-        if (proxyOn && cfg.isNotBlank()) setStatus("اتصال به پروکسی...")
-        applyProxy()
-        val dir = File(ctx.cacheDir, "dl/${System.currentTimeMillis()}").apply { mkdirs() }
-        var failed = 0
-        var lastError = ""
-
-        when {
-            ghReady() && GhActions.supports(link) -> runGh(link, dir)
-            Spotify.isSpotify(link) -> {
-                setStatus("گرفتن لیست آهنگ‌ها...")
-                val tracks = Spotify.resolve(link)
-                tracks.forEachIndexed { i, t ->
-                    setStatus("آهنگ ${i + 1} از ${tracks.size}: ${t.title}")
-                    withContext(Dispatchers.Main) { progress = -1f }
-                    val q = if (t.artist.isBlank()) "ytsearch1:${t.title} audio" else "ytsearch1:${t.artist} - ${t.title} audio"
-                    val name = safe(if (t.artist.isBlank()) t.title else "${t.artist} - ${t.title}")
-                    try {
-                        ytdlp(q, dir, true, name)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Throwable) {
-                        failed++
-                        lastError = nice(e)
-                    }
-                }
-            }
-            Pinterest.isPinterest(link) -> pinterest(link, dir)
-            else -> {
-                try {
-                    ytdlp(link, dir, audioOnly, null)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Throwable) {
-                    if (!ghReady()) throw e
-                    setStatus("روی گوشی نشد، میرم سراغ GitHub Actions...")
-                    runGh(link, dir)
-                }
-            }
-        }
-
-        val files = (dir.listFiles() ?: emptyArray())
-            .filter { it.isFile && it.length() > 0 && it.extension.lowercase() !in setOf("part", "ytdl", "json", "txt", "temp") }
-            .sortedBy { it.name }
-        if (files.isEmpty()) throw RuntimeException(if (lastError.isNotEmpty()) lastError else "فایلی دانلود نشد")
-        withContext(Dispatchers.Main) {
-            files.forEach { f -> items.add(0, Item(f, f.nameWithoutExtension, Gallery.mimeOf(f))) }
-            status = if (failed > 0) "${files.size} فایل دانلود شد، $failed تا ناموفق بود" else "دانلود تموم شد (${files.size} فایل)"
-        }
-    }
-
-    private fun ghReady() = ghOn && ghToken.isNotBlank() && ghRepo.contains("/")
-
-    private suspend fun runGh(link: String, dir: File) {
-        GhActions.download(
-            ghRepo.trim(), ghToken.trim(), ghQuality.trim().ifEmpty { "720" }, ghDelete,
-            link, audioOnly, dir, { setStatus(it) }, { progress = it }
-        )
-    }
-
-    private fun safe(s: String) = s.replace(Regex("""[\\/:*?"<>|\r\n]"""), "_").trim().take(100)
-
-    private suspend fun ytdlp(target: String, dir: File, audio: Boolean, name: String?) {
-        val req = YoutubeDLRequest(target)
-        val out = if (name != null) "${dir.absolutePath}/$name.%(ext)s" else "${dir.absolutePath}/%(title).80s.%(ext)s"
-        req.addOption("-o", out)
-        if (target.startsWith("ytsearch")) req.addOption("--playlist-items", "1") else req.addOption("--no-playlist")
-        req.addOption("--no-mtime")
-        req.addOption("--retries", "3")
-        req.addOption("--socket-timeout", "30")
-        req.addOption("--concurrent-fragments", "4")
-        if (audio) {
-            req.addOption("-x")
-            req.addOption("--audio-format", "mp3")
-            req.addOption("--audio-quality", "0")
-            req.addOption("--embed-metadata")
-        } else {
-            req.addOption("-f", "bv*+ba/b")
-            req.addOption("-S", "res:1080,vcodec:h264,acodec:m4a")
-            req.addOption("--merge-output-format", "mp4")
-        }
-        req.addOption("--extractor-args", "youtube:player_client=android_vr,tv_simply,ios,mweb")
-        if (cookies.isNotBlank()) {
-            val cf = File(ctx.cacheDir, "cookies.txt")
-            cf.writeText(cookies.trim() + "\n")
-            req.addOption("--cookies", cf.absolutePath)
-        }
-        val port = Net.proxyPort
-        if (port > 0) req.addOption("--proxy", "socks5h://127.0.0.1:$port")
-        val pid = "kdl-${System.nanoTime()}"
-        processId = pid
-        try {
-            YoutubeDL.getInstance().execute(req, pid) { p, _, line ->
-                progress = if (p >= 0f) p / 100f else -1f
-                if (line.isNotBlank() && !line.startsWith("[download]")) status = line.take(80)
-            }
-        } finally {
-            processId = null
-        }
-    }
-
-    private suspend fun pinterest(link: String, dir: File) {
-        val html = try {
-            Pinterest.fetchHtml(link)
-        } catch (_: Throwable) {
-            null
-        }
-        if (html == null) {
-            ytdlp(link, dir, false, null)
-            return
-        }
-        if (Pinterest.hasVideo(html)) {
-            try {
-                ytdlp(link, dir, false, null)
-                return
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                val mp4 = Pinterest.findMp4(html) ?: throw e
-                setStatus("دانلود ویدیو...")
-                Net.download(mp4, File(dir, "pin_${System.currentTimeMillis()}.mp4")) { progress = it / 100f }
-                return
-            }
-        }
-        val img = Pinterest.findImage(html) ?: throw RuntimeException("عکس پین پیدا نشد")
-        setStatus("دانلود ${if (img.ext == "gif") "گیف" else "عکس"}...")
-        val f = File(dir, "pin_${System.currentTimeMillis()}.${img.ext}")
-        try {
-            Net.download(img.url, f) { progress = it / 100f }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Throwable) {
-            Net.download(img.fallback, f) { progress = it / 100f }
-        }
-    }
-
     fun save(item: Item) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                Gallery.save(ctx, item.file, item.mime, item.kind)
+                if (saveMode == "folder" && treeUri.isNotBlank()) {
+                    Gallery.saveToTree(ctx, item.file, item.mime, Uri.parse(treeUri))
+                } else {
+                    Gallery.save(ctx, item.file, item.mime, item.kind)
+                }
                 withContext(Dispatchers.Main) {
                     item.saved = true
-                    toast("توی گالری ذخیره شد")
+                    History.write(ctx, items.toList())
+                    status = "ذخیره شد"
                 }
             } catch (e: Throwable) {
-                withContext(Dispatchers.Main) { toast("ذخیره نشد: ${nice(e)}") }
+                withContext(Dispatchers.Main) { status = "ذخیره نشد: ${nice(e)}" }
             }
         }
     }
@@ -333,71 +194,57 @@ class MainVM(app: Application) : AndroidViewModel(app) {
         items.filter { !it.saved }.forEach { save(it) }
     }
 
-    fun saveAndTest() {
-        if (settingsBusy) return
-        val text = cfg.trim()
-        Prefs.setConfig(ctx, text)
-        if (text.isEmpty()) {
-            ProxyCtl.off()
-            settingsMsg = "کانفیگ پاک شد"
-            return
-        }
-        settingsBusy = true
-        settingsMsg = "در حال تست..."
-        viewModelScope.launch(Dispatchers.IO) {
-            val msg = try {
-                ConfigParser.toXrayJson(text, 1080)
-                ProxyCtl.off()
-                ProxyCtl.ensure(ctx, text)
-                val ms = Net.probe()
-                if (!proxyOn) {
-                    proxyOn = true
-                    Prefs.setProxyOn(ctx, true)
-                }
-                "وصله ✓  (${ms}ms)"
-            } catch (e: Throwable) {
-                ProxyCtl.off()
-                "ناموفق: ${nice(e)}"
-            }
-            withContext(Dispatchers.Main) {
-                settingsMsg = msg
-                settingsBusy = false
-            }
-        }
+    fun delete(item: Item) {
+        items.remove(item)
+        item.file.delete()
+        History.write(ctx, items.toList())
     }
 
     fun saveGh() {
-        Prefs.setBool(ctx, "ghOn", ghOn)
         Prefs.setStr(ctx, "ghRepo", ghRepo.trim())
         Prefs.setStr(ctx, "ghToken", ghToken.trim())
-        Prefs.setStr(ctx, "ghQuality", ghQuality.trim())
-        Prefs.setBool(ctx, "ghDelete", ghDelete)
-        settingsMsg = "تنظیمات گیت‌هاب ذخیره شد"
+        settingsMsg = "ذخیره شد"
     }
 
-    fun saveCookies() {
-        Prefs.setCookies(ctx, cookies.trim())
-        settingsMsg = if (cookies.isBlank()) "کوکی پاک شد" else "کوکی ذخیره شد"
+    fun setSaveMode(mode: String) {
+        saveMode = mode
+        Prefs.setStr(ctx, "saveMode", mode)
     }
 
-    fun updateYtdlp() {
+    fun setTree(uri: Uri) {
+        try {
+            ctx.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        } catch (_: Throwable) {
+        }
+        treeUri = uri.toString()
+        Prefs.setStr(ctx, "treeUri", treeUri)
+        setSaveMode("folder")
+    }
+
+    fun checkUpdate() {
         if (settingsBusy) return
         settingsBusy = true
-        settingsMsg = "در حال به‌روزرسانی yt-dlp..."
+        settingsMsg = "در حال بررسی..."
         viewModelScope.launch(Dispatchers.IO) {
             val msg = try {
-                Engine.init(ctx)
-                val port = applyProxy()
-                if (port > 0) {
-                    System.setProperty("socksProxyHost", "127.0.0.1")
-                    System.setProperty("socksProxyPort", port.toString())
-                }
-                try {
-                    val r = YoutubeDL.getInstance().updateYoutubeDL(ctx)
-                    "yt-dlp: $r"
-                } finally {
-                    System.clearProperty("socksProxyHost")
-                    System.clearProperty("socksProxyPort")
+                val token = ghToken.trim().ifEmpty { null }
+                val info = Updater.latest(token)
+                val cur = Updater.currentVersion(ctx)
+                if (!Updater.isNewer(info.tag, cur)) {
+                    "آخرین نسخه رو داری ($cur)"
+                } else {
+                    withContext(Dispatchers.Main) { settingsMsg = "دانلود نسخه ${info.tag}..." }
+                    val apk = File(ctx.cacheDir, "update/KavirDL.apk")
+                    apk.parentFile?.mkdirs()
+                    if (token != null) {
+                        Net.download(info.assetUrl, apk, token, "application/octet-stream") { }
+                    } else {
+                        Net.download(info.publicUrl, apk, null, "application/octet-stream") { }
+                    }
+                    if (Updater.install(ctx, apk)) "صفحه نصب باز شد" else "اجازه نصب برنامه‌ها رو برای KavirDL روشن کن و دوباره بزن"
                 }
             } catch (e: Throwable) {
                 "ناموفق: ${nice(e)}"
@@ -407,10 +254,5 @@ class MainVM(app: Application) : AndroidViewModel(app) {
                 settingsBusy = false
             }
         }
-    }
-
-    override fun onCleared() {
-        ProxyCtl.off()
-        super.onCleared()
     }
 }

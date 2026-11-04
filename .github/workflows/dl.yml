@@ -1,0 +1,72 @@
+name: Download
+run-name: dl ${{ inputs.job }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Link
+        required: true
+        type: string
+      quality:
+        description: best, 1080, 720, 480 or audio
+        required: false
+        default: '720'
+        type: string
+      audio:
+        description: true or false
+        required: false
+        default: 'false'
+        type: string
+      job:
+        description: Job id
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      URL: ${{ inputs.url }}
+      QUALITY: ${{ inputs.quality }}
+      AUDIO: ${{ inputs.audio }}
+      JOB: ${{ inputs.job }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Start WARP
+        if: ${{ contains(inputs.url, 'youtu') || contains(inputs.url, 'instagram') || contains(inputs.url, 'spotify') }}
+        run: |
+          docker run -d --name warp --restart=always -p 1080:1080 --cap-add NET_ADMIN \
+            --sysctl net.ipv6.conf.all.disable_ipv6=0 --sysctl net.ipv4.conf.all.src_valid_mark=1 \
+            -v warp-data:/var/lib/cloudflare-warp caomingjun/warp || true
+          for i in $(seq 1 40); do
+            sleep 1
+            R=$(curl -s --max-time 8 --socks5-hostname 127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace || true)
+            if echo "$R" | grep -qE "warp=(on|plus)"; then
+              echo "PROXY=socks5://127.0.0.1:1080" >> "$GITHUB_ENV"
+              break
+            fi
+          done
+
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          pip install -U "yt-dlp[default]"
+
+      - name: Download
+        run: python3 .github/scripts/dl.py
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "dl-$JOB" out/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "dl $JOB" --notes "temporary" --prerelease

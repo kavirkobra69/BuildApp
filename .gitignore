@@ -3,5 +3,5 @@ build/
 local.properties
 .idea/
 *.iml
-xr/
-app/src/main/jniLibs/
+out/
+__pycache__/

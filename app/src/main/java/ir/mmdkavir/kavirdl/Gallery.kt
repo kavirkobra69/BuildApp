@@ -5,7 +5,9 @@ import android.content.Context
 import android.media.MediaScannerConnection
 import android.os.Build
 import android.os.Environment
+import android.net.Uri
 import android.provider.MediaStore
+import androidx.documentfile.provider.DocumentFile
 import java.io.File
 
 enum class Kind { VIDEO, AUDIO, IMAGE }
@@ -32,6 +34,12 @@ object Gallery {
         mime.startsWith("video") -> Kind.VIDEO
         mime.startsWith("audio") -> Kind.AUDIO
         else -> Kind.IMAGE
+    }
+
+    fun saveToTree(ctx: Context, file: File, mime: String, tree: Uri) {
+        val dir = DocumentFile.fromTreeUri(ctx, tree) ?: throw RuntimeException("پوشه در دسترس نیست")
+        val target = dir.createFile(mime, file.name) ?: throw RuntimeException("ساخت فایل ممکن نشد")
+        ctx.contentResolver.openOutputStream(target.uri)!!.use { out -> file.inputStream().use { it.copyTo(out) } }
     }
 
     fun save(ctx: Context, file: File, mime: String, kind: Kind) {

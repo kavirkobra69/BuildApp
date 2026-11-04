@@ -4,6 +4,9 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val appVersion = (project.findProperty("appVersion") as String?) ?: "1.0.0"
+val appCode = (project.findProperty("appCode") as String?)?.toInt() ?: 10000
+
 android {
     namespace = "ir.mmdkavir.kavirdl"
     compileSdk = 34
@@ -12,26 +15,31 @@ android {
         applicationId = "ir.mmdkavir.kavirdl"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
-        ndk {
-            abiFilters += listOf("arm64-v8a")
-        }
+        versionCode = appCode
+        versionName = appVersion
     }
 
     signingConfigs {
-        getByName("debug") {
-            storeFile = file("debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+        create("release") {
+            val ks = System.getenv("KEYSTORE_FILE")
+            if (!ks.isNullOrEmpty()) {
+                storeFile = file(ks)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            } else {
+                storeFile = file("debug.keystore")
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
         }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
@@ -49,10 +57,6 @@ android {
     }
 
     packaging {
-        jniLibs {
-            useLegacyPackaging = true
-            keepDebugSymbols += "**/libxray.so"
-        }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
@@ -66,8 +70,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
-    implementation("io.github.junkfood02.youtubedl-android:library:0.17.2")
-    implementation("io.github.junkfood02.youtubedl-android:ffmpeg:0.17.2")
 }
