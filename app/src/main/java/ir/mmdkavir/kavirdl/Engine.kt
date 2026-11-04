@@ -96,6 +96,10 @@ class MainVM(app: Application) : AndroidViewModel(app) {
 
     var ghRepo by mutableStateOf(Prefs.str(app, "ghRepo", "kavirkobra69/BuildApp"))
     var ghToken by mutableStateOf(Prefs.str(app, "ghToken"))
+    var updRepo by mutableStateOf(Prefs.str(app, "updRepo", Updater.APP_REPO))
+    var updToken by mutableStateOf(Prefs.str(app, "updToken"))
+    var dlMsg by mutableStateOf("")
+    var updMsg by mutableStateOf("")
     var saveMode by mutableStateOf(Prefs.str(app, "saveMode", "gallery"))
     var treeUri by mutableStateOf(Prefs.str(app, "treeUri"))
     var settingsMsg by mutableStateOf("")
@@ -141,7 +145,7 @@ class MainVM(app: Application) : AndroidViewModel(app) {
             val tmp = File(ctx.cacheDir, "dl/${System.currentTimeMillis()}")
             try {
                 val files = GhActions.download(
-                    ghRepo.trim(), ghToken.trim(), quality, link, tmp,
+                    GhActions.normRepo(ghRepo), ghToken.trim(), quality, link, tmp,
                     { setStatus(it) }, { progress = it }
                 )
                 val stamp = System.currentTimeMillis()
@@ -201,9 +205,35 @@ class MainVM(app: Application) : AndroidViewModel(app) {
     }
 
     fun saveGh() {
-        Prefs.setStr(ctx, "ghRepo", ghRepo.trim())
+        ghRepo = GhActions.normRepo(ghRepo)
+        Prefs.setStr(ctx, "ghRepo", ghRepo)
         Prefs.setStr(ctx, "ghToken", ghToken.trim())
-        settingsMsg = "ذخیره شد"
+        dlMsg = "ذخیره شد"
+    }
+
+    fun testGh() {
+        if (settingsBusy) return
+        saveGh()
+        settingsBusy = true
+        dlMsg = "در حال تست..."
+        viewModelScope.launch(Dispatchers.IO) {
+            val msg = try {
+                GhActions.check(ghRepo, ghToken.trim())
+            } catch (e: Throwable) {
+                "ناموفق: ${nice(e)}"
+            }
+            withContext(Dispatchers.Main) {
+                dlMsg = msg
+                settingsBusy = false
+            }
+        }
+    }
+
+    fun saveUpd() {
+        updRepo = GhActions.normRepo(updRepo)
+        Prefs.setStr(ctx, "updRepo", updRepo)
+        Prefs.setStr(ctx, "updToken", updToken.trim())
+        updMsg = "ذخیره شد"
     }
 
     fun pickSaveMode(mode: String) {
@@ -227,16 +257,17 @@ class MainVM(app: Application) : AndroidViewModel(app) {
     fun checkUpdate() {
         if (settingsBusy) return
         settingsBusy = true
-        settingsMsg = "در حال بررسی..."
+        saveUpd()
+        updMsg = "در حال بررسی..."
         viewModelScope.launch(Dispatchers.IO) {
             val msg = try {
-                val token = ghToken.trim().ifEmpty { null }
-                val info = Updater.latest(token)
+                val token = updToken.trim().ifEmpty { null }
+                val info = Updater.latest(updRepo, token)
                 val cur = Updater.currentVersion(ctx)
                 if (!Updater.isNewer(info.tag, cur)) {
                     "آخرین نسخه رو داری ($cur)"
                 } else {
-                    withContext(Dispatchers.Main) { settingsMsg = "دانلود نسخه ${info.tag}..." }
+                    withContext(Dispatchers.Main) { updMsg = "دانلود نسخه ${info.tag}..." }
                     val apk = File(ctx.cacheDir, "update/KavirDL.apk")
                     apk.parentFile?.mkdirs()
                     if (token != null) {
@@ -250,7 +281,7 @@ class MainVM(app: Application) : AndroidViewModel(app) {
                 "ناموفق: ${nice(e)}"
             }
             withContext(Dispatchers.Main) {
-                settingsMsg = msg
+                updMsg = msg
                 settingsBusy = false
             }
         }

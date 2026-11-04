@@ -34,8 +34,10 @@ object Updater {
         return false
     }
 
-    fun latest(token: String?): UpdateInfo {
-        val (code, text) = Net.api("GET", "/repos/$APP_REPO/releases/latest", token)
+    fun latest(repo: String, token: String?): UpdateInfo {
+        val (code, text) = Net.api("GET", "/repos/$repo/releases/latest", token)
+        if (code == 404) throw RuntimeException("ریلیزی توی این ریپو پیدا نشد (404)")
+        if (code == 401) throw RuntimeException("توکن اشتباهه (401). خالی بذارش اگه ریپو public ـه")
         if (code != 200) throw RuntimeException("GitHub $code")
         val o = JSONObject(text)
         val assets = o.getJSONArray("assets")

@@ -8,6 +8,38 @@ import java.io.File
 object GhActions {
     private const val WORKFLOW = "dl.yml"
 
+    fun normRepo(s: String): String {
+        val t = s.trim()
+            .removePrefix("https://").removePrefix("http://")
+            .removePrefix("www.github.com/").removePrefix("github.com/")
+            .removeSuffix(".git").trim('/')
+        val p = t.split("/")
+        return if (p.size >= 2) "${p[0]}/${p[1]}" else t
+    }
+
+    private fun explain(code: Int, text: String): String = when (code) {
+        401 -> "توکن اشتباهه یا منقضی شده (401)"
+        403 -> "توکن اجازه این کار رو نداره (403)"
+        404 -> "ریپو پیدا نشد یا توکن به این ریپو دسترسی نداره (404). اسم ریپو رو چک کن و توی توکن همین ریپو رو انتخاب کن"
+        else -> err(code, text)
+    }
+
+    fun check(repo: String, token: String): String {
+        if (!repo.contains("/")) return "آدرس ریپو درست نیست. مثل owner/name بنویس"
+        val (rc, rt) = Net.api("GET", "/repos/$repo", token)
+        if (rc != 200) return explain(rc, rt)
+        val canPush = try {
+            JSONObject(rt).getJSONObject("permissions").optBoolean("push")
+        } catch (_: Throwable) {
+            true
+        }
+        if (!canPush) return "توکن فقط خوندن داره. باید Contents و Actions رو روی Read and write بذاری"
+        val (wc, _) = Net.api("GET", "/repos/$repo/actions/workflows/$WORKFLOW", token)
+        if (wc == 404) return "اتصال درسته ولی ورک‌فلو dl.yml توی این ریپو نیست"
+        if (wc != 200) return explain(wc, "")
+        return "وصله ✓ ورک‌فلو آماده‌ست"
+    }
+
     private fun err(code: Int, text: String): String {
         val m = try {
             JSONObject(text).optString("message")
@@ -29,7 +61,7 @@ object GhActions {
         progress: (Float) -> Unit
     ): List<File> {
         val (rc, rt) = Net.api("GET", "/repos/$repo", token)
-        if (rc != 200) throw RuntimeException("ریپو یا توکن مشکل داره: ${err(rc, rt)}")
+        if (rc != 200) throw RuntimeException(explain(rc, rt))
         val branch = JSONObject(rt).getString("default_branch")
         val job = java.lang.Long.toString(System.currentTimeMillis(), 36) + (100..999).random()
 

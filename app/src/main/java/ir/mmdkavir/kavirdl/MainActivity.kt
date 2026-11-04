@@ -346,27 +346,55 @@ fun SettingsScreen(vm: MainVM) {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("گیت‌هاب (دانلود روی اکشن)", style = MaterialTheme.typography.titleMedium)
+        Text("۱) دانلود ویدیو (GitHub Actions)", style = MaterialTheme.typography.titleMedium)
         Text(
-            "ریپویی که ورک‌فلوی dl.yml توش هست و توکن (PAT) با دسترسی write به Contents و Actions.",
+            "لینک یا اسم ریپویی که ورک‌فلوی dl.yml توشه، و توکن با دسترسی Contents و Actions روی Read and write.",
             style = MaterialTheme.typography.bodySmall
         )
         OutlinedTextField(
             value = vm.ghRepo,
             onValueChange = { vm.ghRepo = it },
-            label = { Text("ریپو (owner/name)") },
+            label = { Text("لینک ریپوی دانلود") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
         OutlinedTextField(
             value = vm.ghToken,
             onValueChange = { vm.ghToken = it },
-            label = { Text("توکن گیت‌هاب") },
+            label = { Text("توکن گیت‌هاب برای دانلود") },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth()
         )
-        Button(onClick = { vm.saveGh() }) { Text("ذخیره") }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { vm.saveGh() }) { Text("ذخیره") }
+            OutlinedButton(onClick = { vm.testGh() }, enabled = !vm.settingsBusy) { Text("تست اتصال") }
+        }
+        if (vm.dlMsg.isNotBlank()) Text(vm.dlMsg, style = MaterialTheme.typography.bodyMedium)
+        HorizontalDivider()
+        Text("۲) آپدیت برنامه", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "لینک ریپویی که نسخه‌های برنامه توش Release می‌شه. اگه ریپو public ـه توکن نذار.",
+            style = MaterialTheme.typography.bodySmall
+        )
+        OutlinedTextField(
+            value = vm.updRepo,
+            onValueChange = { vm.updRepo = it },
+            label = { Text("لینک ریپوی برنامه") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = vm.updToken,
+            onValueChange = { vm.updToken = it },
+            label = { Text("توکن آپدیت (اختیاری)") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth()
+        )
+        Text("نسخه فعلی: ${vm.versionName}", style = MaterialTheme.typography.bodyMedium)
+        Button(onClick = { vm.checkUpdate() }, enabled = !vm.settingsBusy) { Text("بررسی آپدیت") }
+        if (vm.updMsg.isNotBlank()) Text(vm.updMsg, style = MaterialTheme.typography.bodyMedium)
         HorizontalDivider()
         Text("محل ذخیره", style = MaterialTheme.typography.titleMedium)
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -380,9 +408,5 @@ fun SettingsScreen(vm: MainVM) {
             Text(if (folderName.isEmpty()) "پوشه دلخواه" else "پوشه: $folderName")
         }
         OutlinedButton(onClick = { picker.launch(null) }) { Text("انتخاب پوشه") }
-        HorizontalDivider()
-        Text("نسخه ${vm.versionName}", style = MaterialTheme.typography.titleMedium)
-        Button(onClick = { vm.checkUpdate() }, enabled = !vm.settingsBusy) { Text("بررسی آپدیت") }
-        if (vm.settingsMsg.isNotBlank()) Text(vm.settingsMsg, style = MaterialTheme.typography.bodyMedium)
     }
 }
