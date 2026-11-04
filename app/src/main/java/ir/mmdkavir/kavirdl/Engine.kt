@@ -104,7 +104,7 @@ class MainVM(app: Application) : AndroidViewModel(app) {
 
     private var job: Job? = null
 
-    fun setQuality(k: String) {
+    fun pickQuality(k: String) {
         quality = k
         Prefs.setStr(ctx, "quality", k)
     }
@@ -206,7 +206,7 @@ class MainVM(app: Application) : AndroidViewModel(app) {
         settingsMsg = "ذخیره شد"
     }
 
-    fun setSaveMode(mode: String) {
+    fun pickSaveMode(mode: String) {
         saveMode = mode
         Prefs.setStr(ctx, "saveMode", mode)
     }
@@ -221,7 +221,7 @@ class MainVM(app: Application) : AndroidViewModel(app) {
         }
         treeUri = uri.toString()
         Prefs.setStr(ctx, "treeUri", treeUri)
-        setSaveMode("folder")
+        pickSaveMode("folder")
     }
 
     fun checkUpdate() {

@@ -182,7 +182,7 @@ fun Home(vm: MainVM) {
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             listOf("best" to "بهترین", "1080" to "1080", "720" to "720", "480" to "480", "audio" to "فقط صدا (mp3)").forEach { (k, label) ->
-                FilterChip(selected = vm.quality == k, onClick = { vm.setQuality(k) }, label = { Text(label) })
+                FilterChip(selected = vm.quality == k, onClick = { vm.pickQuality(k) }, label = { Text(label) })
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -370,12 +370,12 @@ fun SettingsScreen(vm: MainVM) {
         HorizontalDivider()
         Text("محل ذخیره", style = MaterialTheme.typography.titleMedium)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            RadioButton(selected = vm.saveMode == "gallery", onClick = { vm.setSaveMode("gallery") })
+            RadioButton(selected = vm.saveMode == "gallery", onClick = { vm.pickSaveMode("gallery") })
             Text("گالری (Movies، Music و Pictures داخل KavirDL)")
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             RadioButton(selected = vm.saveMode == "folder", onClick = {
-                if (vm.treeUri.isBlank()) picker.launch(null) else vm.setSaveMode("folder")
+                if (vm.treeUri.isBlank()) picker.launch(null) else vm.pickSaveMode("folder")
             })
             Text(if (folderName.isEmpty()) "پوشه دلخواه" else "پوشه: $folderName")
         }
