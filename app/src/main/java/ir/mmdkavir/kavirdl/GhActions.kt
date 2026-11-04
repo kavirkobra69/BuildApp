@@ -4,9 +4,11 @@ import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.net.URLEncoder
 
 object GhActions {
     private const val WORKFLOW = "dl.yml"
+    private const val LEGACY = "YT-downloader.yml"
 
     fun normRepo(s: String): String {
         val t = s.trim()
@@ -34,10 +36,112 @@ object GhActions {
             true
         }
         if (!canPush) return "توکن فقط خوندن داره. باید Contents و Actions رو روی Read and write بذاری"
-        val (wc, _) = Net.api("GET", "/repos/$repo/actions/workflows/$WORKFLOW", token)
-        if (wc == 404) return "اتصال درسته ولی ورک‌فلو dl.yml توی این ریپو نیست"
-        if (wc != 200) return explain(wc, "")
-        return "وصله ✓ ورک‌فلو آماده‌ست"
+        if (hasWorkflow(repo, token, WORKFLOW)) return "وصله ✓ ورک‌فلو dl.yml (همه سایت‌ها)"
+        if (hasWorkflow(repo, token, LEGACY)) return "وصله ✓ ورک‌فلو YT-downloader (یوتیوب، اینستاگرام، تیک‌تاک)"
+        return "اتصال درسته ولی نه dl.yml توی این ریپو هست نه YT-downloader.yml"
+    }
+
+    private fun hasWorkflow(repo: String, token: String, file: String): Boolean =
+        Net.api("GET", "/repos/$repo/actions/workflows/$file", token).first == 200
+
+    private fun enc(path: String) =
+        path.split("/").joinToString("/") { URLEncoder.encode(it, "UTF-8").replace("+", "%20") }
+
+    private fun listVideos(repo: String, token: String, ref: String): Map<String, JSONObject> {
+        val (code, text) = Net.api("GET", "/repos/$repo/contents/videos?ref=${URLEncoder.encode(ref, "UTF-8")}", token)
+        if (code == 404) return emptyMap()
+        if (code != 200) throw RuntimeException(explain(code, text))
+        val arr = JSONArray(text)
+        val out = LinkedHashMap<String, JSONObject>()
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            if (o.optString("type") == "file") out[o.getString("name")] = o
+        }
+        return out
+    }
+
+    private fun legacyRuns(repo: String, token: String): List<JSONObject> {
+        val (code, text) = Net.api("GET", "/repos/$repo/actions/workflows/$LEGACY/runs?event=workflow_dispatch&per_page=10", token)
+        if (code != 200) throw RuntimeException(explain(code, text))
+        val arr = JSONObject(text).getJSONArray("workflow_runs")
+        return (0 until arr.length()).map { arr.getJSONObject(it) }
+    }
+
+    private suspend fun legacy(
+        repo: String,
+        token: String,
+        branch: String,
+        quality: String,
+        url: String,
+        dir: File,
+        status: suspend (String) -> Unit,
+        progress: (Float) -> Unit
+    ): List<File> {
+        val low = url.lowercase()
+        if (low.contains("spotify") || low.contains("pinterest") || low.contains("pin.it")) {
+            throw RuntimeException("ورک‌فلوی YT-downloader فقط یوتیوب، اینستاگرام و تیک‌تاک رو پشتیبانی می‌کنه. برای اسپاتیفای و پینترست باید dl.yml توی ریپو باشه")
+        }
+        val before = listVideos(repo, token, branch)
+        val known = legacyRuns(repo, token).map { it.getLong("id") }.toSet()
+
+        status("ارسال درخواست به گیت‌هاب...")
+        val body = JSONObject()
+            .put("ref", branch)
+            .put(
+                "inputs",
+                JSONObject()
+                    .put("youtube_url", url)
+                    .put("quality", quality)
+                    .put("split_threshold_mb", "0")
+                    .put("save_in_new_branch", "false")
+            ).toString()
+        val (dc, dt) = Net.api("POST", "/repos/$repo/actions/workflows/$LEGACY/dispatches", token, body)
+        if (dc != 204) throw RuntimeException("اجرای ورک‌فلو ناموفق: ${err(dc, dt)}")
+
+        val started = System.currentTimeMillis()
+        while (true) {
+            delay(4000)
+            val sec = (System.currentTimeMillis() - started) / 1000
+            if (sec > 30 * 60) throw RuntimeException("زمان انتظار تموم شد")
+            val run = legacyRuns(repo, token).firstOrNull { it.getLong("id") !in known }
+            if (run == null) {
+                status("منتظر شروع ورک‌فلو... ${sec}s")
+                continue
+            }
+            if (run.optString("status") == "completed") {
+                val concl = run.optString("conclusion")
+                if (concl != "success") throw RuntimeException("دانلود روی گیت‌هاب شکست خورد ($concl) ${run.optString("html_url")}")
+                break
+            }
+            status("در حال دانلود روی گیت‌هاب... ${sec}s")
+        }
+
+        status("گرفتن فایل از ریپو...")
+        val after = listVideos(repo, token, branch)
+        val fresh = after.filter { (name, o) -> before[name]?.optString("sha") != o.optString("sha") }
+        if (fresh.isEmpty()) throw RuntimeException("فایل جدیدی توی ریپو پیدا نشد")
+        dir.mkdirs()
+        val result = mutableListOf<File>()
+        for ((name, o) in fresh) {
+            status("دانلود $name")
+            val path = o.getString("path")
+            val out = File(dir, safeName(name))
+            Net.download(
+                "https://api.github.com/repos/$repo/contents/${enc(path)}?ref=${URLEncoder.encode(branch, "UTF-8")}",
+                out, token, "application/vnd.github.raw", progress
+            )
+            result += out
+            try {
+                val del = JSONObject()
+                    .put("message", "remove downloaded file [skip ci]")
+                    .put("sha", o.getString("sha"))
+                    .put("branch", branch)
+                    .toString()
+                Net.api("DELETE", "/repos/$repo/contents/${enc(path)}", token, del)
+            } catch (_: Throwable) {
+            }
+        }
+        return result
     }
 
     private fun err(code: Int, text: String): String {
@@ -63,6 +167,10 @@ object GhActions {
         val (rc, rt) = Net.api("GET", "/repos/$repo", token)
         if (rc != 200) throw RuntimeException(explain(rc, rt))
         val branch = JSONObject(rt).getString("default_branch")
+        if (!hasWorkflow(repo, token, WORKFLOW)) {
+            if (hasWorkflow(repo, token, LEGACY)) return legacy(repo, token, branch, quality, url, dir, status, progress)
+            throw RuntimeException("توی این ریپو نه dl.yml هست نه YT-downloader.yml")
+        }
         val job = java.lang.Long.toString(System.currentTimeMillis(), 36) + (100..999).random()
 
         status("ارسال درخواست به گیت‌هاب...")
