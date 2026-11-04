@@ -43,7 +43,6 @@ jobs:
           python-version: '3.12'
 
       - name: Start WARP
-        if: ${{ contains(inputs.url, 'youtu') || contains(inputs.url, 'instagram') || contains(inputs.url, 'spotify') }}
         run: |
           docker run -d --name warp --restart=always -p 1080:1080 --cap-add NET_ADMIN \
             --sysctl net.ipv6.conf.all.disable_ipv6=0 --sysctl net.ipv4.conf.all.src_valid_mark=1 \
