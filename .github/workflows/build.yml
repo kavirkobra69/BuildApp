@@ -4,6 +4,12 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, for example 1.1.0 (empty builds without a release)
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: write
@@ -24,8 +30,10 @@ jobs:
           gradle-version: 8.9
 
       - name: Version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then VER="${GITHUB_REF_NAME#v}"; else VER="0.0.1"; fi
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then VER="${GITHUB_REF_NAME#v}"; elif [ -n "$INPUT_VERSION" ]; then VER="${INPUT_VERSION#v}"; else VER="0.0.1"; fi
           CORE="${VER%%-*}"
           IFS=. read -r MA MI PA <<< "$CORE"
           CODE=$(( ${MA:-0} * 10000 + ${MI:-0} * 100 + ${PA:-0} ))
@@ -57,7 +65,7 @@ jobs:
           path: KavirDL-*.apk
 
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" "KavirDL-$VER.apk" --title "KavirDL $VER" --generate-notes
+        run: gh release create "v$VER" "KavirDL-$VER.apk" --target "$GITHUB_SHA" --title "KavirDL $VER" --generate-notes
