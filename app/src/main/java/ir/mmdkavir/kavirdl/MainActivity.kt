@@ -131,7 +131,7 @@ fun Root(vm: MainVM) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (screen == 0) "KavirDL ✨" else "تنظیمات") },
+                title = { Text(if (screen == 0) "KavirDL 🚀" else "تنظیمات") },
                 navigationIcon = {
                     if (screen == 1) {
                         IconButton(onClick = { screen = 0 }) {
