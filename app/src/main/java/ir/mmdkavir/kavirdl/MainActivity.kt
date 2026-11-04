@@ -336,7 +336,7 @@ fun SettingsScreen(vm: MainVM) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Switch(checked = vm.ghOn, onCheckedChange = { vm.ghOn = it })
             Spacer(Modifier.size(8.dp))
-            Text("استفاده برای لینک‌های یوتیوب")
+            Text("استفاده برای یوتیوب و اینستاگرام (و جایگزین وقتی دانلود مستقیم نشد)")
         }
         OutlinedTextField(
             value = vm.ghRepo,

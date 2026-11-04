@@ -187,12 +187,7 @@ class MainVM(app: Application) : AndroidViewModel(app) {
         var lastError = ""
 
         when {
-            ghOn && ghToken.isNotBlank() && ghRepo.contains("/") && GhActions.isYoutube(link) -> {
-                GhActions.download(
-                    ghRepo.trim(), ghToken.trim(), ghQuality.trim().ifEmpty { "720" }, ghDelete,
-                    link, audioOnly, dir, { setStatus(it) }, { progress = it }
-                )
-            }
+            ghReady() && GhActions.supports(link) -> runGh(link, dir)
             Spotify.isSpotify(link) -> {
                 setStatus("گرفتن لیست آهنگ‌ها...")
                 val tracks = Spotify.resolve(link)
@@ -212,7 +207,17 @@ class MainVM(app: Application) : AndroidViewModel(app) {
                 }
             }
             Pinterest.isPinterest(link) -> pinterest(link, dir)
-            else -> ytdlp(link, dir, audioOnly, null)
+            else -> {
+                try {
+                    ytdlp(link, dir, audioOnly, null)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    if (!ghReady()) throw e
+                    setStatus("روی گوشی نشد، میرم سراغ GitHub Actions...")
+                    runGh(link, dir)
+                }
+            }
         }
 
         val files = (dir.listFiles() ?: emptyArray())
@@ -223,6 +228,15 @@ class MainVM(app: Application) : AndroidViewModel(app) {
             files.forEach { f -> items.add(0, Item(f, f.nameWithoutExtension, Gallery.mimeOf(f))) }
             status = if (failed > 0) "${files.size} فایل دانلود شد، $failed تا ناموفق بود" else "دانلود تموم شد (${files.size} فایل)"
         }
+    }
+
+    private fun ghReady() = ghOn && ghToken.isNotBlank() && ghRepo.contains("/")
+
+    private suspend fun runGh(link: String, dir: File) {
+        GhActions.download(
+            ghRepo.trim(), ghToken.trim(), ghQuality.trim().ifEmpty { "720" }, ghDelete,
+            link, audioOnly, dir, { setStatus(it) }, { progress = it }
+        )
     }
 
     private fun safe(s: String) = s.replace(Regex("""[\\/:*?"<>|\r\n]"""), "_").trim().take(100)

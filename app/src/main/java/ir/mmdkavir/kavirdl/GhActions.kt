@@ -11,6 +11,8 @@ object GhActions {
 
     fun isYoutube(url: String) = url.contains("youtube.com") || url.contains("youtu.be")
 
+    fun supports(url: String) = isYoutube(url) || url.contains("instagram.com")
+
     private fun api(method: String, path: String, token: String, body: String? = null): Pair<Int, String> {
         val c = Net.open("https://api.github.com$path", "application/vnd.github+json")
         try {
