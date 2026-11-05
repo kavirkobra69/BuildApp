@@ -85,14 +85,23 @@ object GitHubSetup {
     }
 
     /** Validates that the token's account owns the repository and can write to it. */
-    fun validate(token: String, input: String): Pair<String, RepoInfo> {
+    fun validate(token: String, input: String, username: String = "", branch: String = ""): Pair<String, RepoInfo> {
         val me = login(token)
-        val (o, n) = parseRepo(input, me) ?: throw RuntimeException("آدرس ریپو معتبر نیست")
+        val (o, n) = parseRepo(input, username.trim().ifEmpty { me }) ?: throw RuntimeException("آدرس ریپو معتبر نیست")
         if (!o.equals(me, ignoreCase = true)) throw RuntimeException("این ریپو مال حساب $me نیست. فقط ریپوی خودت قابل استفاده‌ست")
         val r = repo(token, o, n) ?: throw RuntimeException("ریپو پیدا نشد")
         if (!r.owner.equals(me, ignoreCase = true)) throw RuntimeException("این ریپو مال حساب $me نیست")
         if (!r.canPush) throw RuntimeException("توکن اجازه نوشتن توی این ریپو رو نداره")
-        return me to r
+        return me to withBranch(token, r, branch)
+    }
+
+    fun withBranch(token: String, r: RepoInfo, branch: String): RepoInfo {
+        val b = branch.trim()
+        if (b.isEmpty() || b == r.branch) return r
+        val (c, t) = Net.api("GET", "/repos/${r.full}/branches/${enc(b)}", token)
+        if (c == 404) throw RuntimeException("شاخه «$b» توی این ریپو پیدا نشد")
+        if (c != 200) throw RuntimeException(msg(c, t))
+        return RepoInfo(r.full, r.owner, r.priv, b, r.canPush)
     }
 
     fun bundled(ctx: Context): List<SetupFile> = BUNDLED.map { (src, dst) ->

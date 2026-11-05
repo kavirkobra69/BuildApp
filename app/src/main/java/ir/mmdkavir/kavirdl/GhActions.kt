@@ -160,17 +160,18 @@ object GhActions {
         url: String,
         job: String,
         dir: File,
+        branch: String = "",
         onUpdate: (Update) -> Unit
     ): List<File> {
         val (rc, rt) = Net.api("GET", "/repos/$repo", token)
         if (rc != 200) throw RuntimeException(explain(rc, rt))
-        val branch = JSONObject(rt).getString("default_branch")
+        val ref = branch.trim().ifEmpty { JSONObject(rt).getString("default_branch") }
 
         onUpdate(Update("بررسی درخواست..."))
         if (findRun(repo, token, job) == null) {
             onUpdate(Update("ارسال درخواست به گیت‌هاب"))
             val body = JSONObject()
-                .put("ref", branch)
+                .put("ref", ref)
                 .put(
                     "inputs",
                     JSONObject()

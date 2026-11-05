@@ -133,15 +133,24 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun Root(vm: MainVM) {
-    var screen by remember { mutableStateOf(0) }
-    BackHandler(screen == 1) { screen = 0 }
+    val rctx = LocalContext.current
+    var screen by remember { mutableStateOf(if (Prefs.str(rctx, "onboarded") == "1") 0 else 3) }
+    BackHandler(screen == 1 || screen == 2) { screen = if (screen == 2) 1 else 0 }
+    if (screen == 3) {
+        Onboarding(
+            onDone = { Prefs.setStr(rctx, "onboarded", "1"); screen = 0 },
+            onSettings = { Prefs.setStr(rctx, "onboarded", "1"); screen = 1 },
+            onGuide = { Prefs.setStr(rctx, "onboarded", "1"); screen = 2 }
+        )
+        return
+    }
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (screen == 0) "KavirDL 🚀" else "تنظیمات") },
+                title = { Text(when (screen) { 0 -> "KavirDL 🚀"; 1 -> "تنظیمات"; else -> "راهنما و نصب" }) },
                 navigationIcon = {
-                    if (screen == 1) {
-                        IconButton(onClick = { screen = 0 }) {
+                    if (screen != 0) {
+                        IconButton(onClick = { screen = if (screen == 2) 1 else 0 }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "بازگشت")
                         }
                     }
@@ -157,7 +166,11 @@ fun Root(vm: MainVM) {
         }
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize()) {
-            if (screen == 0) Home(vm) else SettingsScreen(vm)
+            when (screen) {
+                0 -> Home(vm)
+                1 -> SettingsScreen(vm, onGuide = { screen = 2 }, onIntro = { screen = 3 })
+                else -> GuideScreen()
+            }
         }
     }
 }
@@ -447,7 +460,7 @@ private fun loadThumb(item: Task): ImageBitmap? = try {
 }
 
 @Composable
-fun SettingsScreen(vm: MainVM) {
+fun SettingsScreen(vm: MainVM, onGuide: () -> Unit, onIntro: () -> Unit) {
     val ctx = LocalContext.current
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) vm.setTree(uri)
@@ -492,9 +505,23 @@ fun SettingsScreen(vm: MainVM) {
             modifier = Modifier.fillMaxWidth()
         )
         OutlinedTextField(
+            value = vm.username,
+            onValueChange = { vm.username = it },
+            label = { Text("نام کاربری گیت‌هاب (اختیاری)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
             value = vm.repoInput,
             onValueChange = { vm.repoInput = it },
             label = { Text("لینک یا اسم ریپو (مثلا github.com/نام‌کاربری/ریپو)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = vm.branch,
+            onValueChange = { vm.branch = it },
+            label = { Text("نام شاخه (اختیاری، خالی = شاخه پیش‌فرض)") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
@@ -511,7 +538,7 @@ fun SettingsScreen(vm: MainVM) {
             }
         }
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { vm.connect() }, enabled = !vm.settingsBusy) { Text("اتصال") }
+            Button(onClick = { vm.connect() }, enabled = !vm.settingsBusy) { Text("ذخیره و تست اتصال") }
             Button(onClick = { vm.createConfig() }, enabled = !vm.settingsBusy) { Text("ساخت پیکربندی") }
             OutlinedButton(onClick = { vm.refreshStatus() }, enabled = !vm.settingsBusy && vm.connRepo.isNotBlank()) { Text("تازه‌سازی وضعیت") }
         }
@@ -520,6 +547,8 @@ fun SettingsScreen(vm: MainVM) {
                 onClick = { filePicker.launch(arrayOf("*/*")) },
                 enabled = !vm.settingsBusy && vm.connRepo.isNotBlank()
             ) { Text("آپلود فایل راه‌اندازی Actions") }
+            OutlinedButton(onClick = onGuide) { Text("راهنما و نصب") }
+            OutlinedButton(onClick = onIntro) { Text("نمایش معرفی") }
             OutlinedButton(onClick = { vm.disconnect() }, enabled = !vm.settingsBusy && vm.connRepo.isNotBlank()) { Text("قطع اتصال و حذف توکن") }
         }
         if (vm.settingsBusy) {
@@ -529,8 +558,20 @@ fun SettingsScreen(vm: MainVM) {
         if (vm.dlMsg.isNotBlank()) Text(vm.dlMsg, style = MaterialTheme.typography.bodyMedium)
         HorizontalDivider()
         Text("آپدیت برنامه", style = MaterialTheme.typography.titleMedium)
-        Text("نسخه فعلی: ${vm.versionName} (آپدیت از ریپوی رسمی برنامه، بدون ارسال توکن تو)", style = MaterialTheme.typography.bodyMedium)
-        Button(onClick = { vm.checkUpdate() }, enabled = !vm.settingsBusy) { Text("بررسی آپدیت") }
+        Text("نسخه نصب‌شده: ${vm.versionName}", style = MaterialTheme.typography.bodyMedium)
+        if (vm.updLatest.isNotBlank()) Text("آخرین نسخه: ${vm.updLatest}", style = MaterialTheme.typography.bodyMedium)
+        if (vm.updNotes.isNotBlank()) {
+            Text("تغییرات:", style = MaterialTheme.typography.labelLarge)
+            Text(vm.updNotes.take(1500), style = MaterialTheme.typography.bodySmall)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { vm.checkUpdate() }, enabled = !vm.settingsBusy) { Text("بررسی آپدیت") }
+            if (vm.updAvailable) Button(onClick = { vm.installUpdate() }, enabled = !vm.settingsBusy) { Text("دانلود و نصب ${vm.updLatest}") }
+        }
+        if (vm.updProgress in 0f..1f) {
+            LinearProgressIndicator(progress = { vm.updProgress }, modifier = Modifier.fillMaxWidth())
+            Text("${(vm.updProgress * 100).toInt()}٪", style = MaterialTheme.typography.labelMedium)
+        }
         if (vm.updMsg.isNotBlank()) Text(vm.updMsg, style = MaterialTheme.typography.bodyMedium)
         HorizontalDivider()
         Text("محل ذخیره", style = MaterialTheme.typography.titleMedium)

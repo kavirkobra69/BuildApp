@@ -9,7 +9,7 @@ import androidx.core.content.FileProvider
 import org.json.JSONObject
 import java.io.File
 
-data class UpdateInfo(val tag: String, val assetUrl: String, val publicUrl: String)
+data class UpdateInfo(val tag: String, val assetUrl: String, val publicUrl: String, val notes: String = "")
 
 object Updater {
     const val APP_REPO = "kavirkobra69/BuildApp"
@@ -44,7 +44,7 @@ object Updater {
         for (i in 0 until assets.length()) {
             val a = assets.getJSONObject(i)
             if (a.getString("name").endsWith(".apk")) {
-                return UpdateInfo(o.getString("tag_name"), a.getString("url"), a.getString("browser_download_url"))
+                return UpdateInfo(o.getString("tag_name"), a.getString("url"), a.getString("browser_download_url"), o.optString("body"))
             }
         }
         throw RuntimeException("فایل APK توی ریلیز نبود")

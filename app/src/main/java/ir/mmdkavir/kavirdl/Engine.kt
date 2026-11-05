@@ -130,6 +130,13 @@ class MainVM(app: Application) : AndroidViewModel(app) {
     var ghToken by mutableStateOf("")
     var repoInput by mutableStateOf(Prefs.str(app, "connRepo"))
     var makePrivate by mutableStateOf(true)
+    var username by mutableStateOf(Prefs.str(app, "username"))
+    var branch by mutableStateOf(Prefs.str(app, "branch"))
+    var updLatest by mutableStateOf("")
+    var updNotes by mutableStateOf("")
+    var updAvailable by mutableStateOf(false)
+    var updProgress by mutableStateOf(-1f)
+    private var updInfo: UpdateInfo? = null
     var createNew by mutableStateOf(true)
     var connLogin by mutableStateOf(Prefs.str(app, "connLogin"))
     var connRepo by mutableStateOf(Prefs.str(app, "connRepo"))
@@ -213,7 +220,7 @@ class MainVM(app: Application) : AndroidViewModel(app) {
                 gate.withPermit {
                     withContext(Dispatchers.Main) { t.state = St.RUNNING; t.error = "" }
                     var lastWrite = 0L
-                    val files = GhActions.download(t.repo, stored(), t.quality, t.src, t.id, tmp) { u ->
+                    val files = GhActions.download(t.repo, stored(), t.quality, t.src, t.id, tmp, Prefs.str(ctx, "branch")) { u ->
                         viewModelScope.launch(Dispatchers.Main) {
                             t.label = u.label
                             t.percent = u.percent
@@ -376,7 +383,9 @@ class MainVM(app: Application) : AndroidViewModel(app) {
     fun connect() = run {
         dlMsg = "در حال بررسی..."
         val token = tokenToUse()
-        val (me, r) = GitHubSetup.validate(token, repoInput)
+        val (me, r) = GitHubSetup.validate(token, repoInput, username, branch)
+        Prefs.setStr(ctx, "username", username.trim())
+        Prefs.setStr(ctx, "branch", branch.trim())
         adopt(token, me, r)
         "وصل شد ✓\n" + describe(token, me, r)
     }
@@ -384,7 +393,7 @@ class MainVM(app: Application) : AndroidViewModel(app) {
     fun refreshStatus() = run {
         val token = stored()
         if (token.isBlank() || connRepo.isBlank()) throw RuntimeException("هنوز وصل نشدی")
-        val (me, r) = GitHubSetup.validate(token, connRepo)
+        val (me, r) = GitHubSetup.validate(token, connRepo, username, branch)
         describe(token, me, r)
     }
 
@@ -423,7 +432,7 @@ class MainVM(app: Application) : AndroidViewModel(app) {
         dlMsg = "در حال بررسی..."
         val token = tokenToUse()
         val me = GitHubSetup.login(token)
-        val (o, n) = GitHubSetup.parseRepo(repoInput, me) ?: throw RuntimeException("آدرس یا اسم ریپو معتبر نیست")
+        val (o, n) = GitHubSetup.parseRepo(repoInput, username.trim().ifEmpty { me }) ?: throw RuntimeException("آدرس یا اسم ریپو معتبر نیست")
         if (!o.equals(me, ignoreCase = true)) throw RuntimeException("این ریپو مال حساب $me نیست")
         var r = GitHubSetup.repo(token, o, n)
         var created = false
@@ -434,6 +443,9 @@ class MainVM(app: Application) : AndroidViewModel(app) {
         }
         if (!r.owner.equals(me, ignoreCase = true)) throw RuntimeException("این ریپو مال حساب $me نیست")
         if (!r.canPush) throw RuntimeException("توکن اجازه نوشتن توی این ریپو رو نداره")
+        if (!created) r = GitHubSetup.withBranch(token, r, branch)
+        Prefs.setStr(ctx, "username", username.trim())
+        Prefs.setStr(ctx, "branch", if (created) "" else branch.trim())
         adopt(token, me, r)
         val out = finishUpload(token, r, GitHubSetup.bundled(ctx), emptySet())
         (if (created) "ریپوی جدید ساخته شد: ${r.full}\n" else "") + out
@@ -442,7 +454,7 @@ class MainVM(app: Application) : AndroidViewModel(app) {
     fun uploadPicked(uris: List<Uri>) = run {
         val token = stored()
         if (token.isBlank() || connRepo.isBlank()) throw RuntimeException("اول حساب گیت‌هاب رو وصل کن")
-        val (_, r) = GitHubSetup.validate(token, connRepo)
+        val (_, r) = GitHubSetup.validate(token, connRepo, username, branch)
         val files = uris.map { u ->
             val name = androidx.documentfile.provider.DocumentFile.fromSingleUri(ctx, u)?.name ?: ""
             val bytes = ctx.contentResolver.openInputStream(u)?.use { it.readBytes() } ?: throw RuntimeException("$name: خوندن فایل ممکن نشد")
@@ -485,29 +497,55 @@ class MainVM(app: Application) : AndroidViewModel(app) {
         if (settingsBusy) return
         settingsBusy = true
         updMsg = "در حال بررسی..."
+        updAvailable = false
         viewModelScope.launch(Dispatchers.IO) {
             val msg = try {
-                val token: String? = null
-                val info = Updater.latest(Updater.APP_REPO, token)
+                val info = Updater.latest(Updater.APP_REPO, null)
                 val cur = Updater.currentVersion(ctx)
-                if (!Updater.isNewer(info.tag, cur)) {
-                    "آخرین نسخه رو داری ($cur)"
-                } else {
-                    withContext(Dispatchers.Main) { updMsg = "دانلود نسخه ${info.tag}..." }
-                    val apk = File(ctx.cacheDir, "update/KavirDL.apk")
-                    apk.parentFile?.mkdirs()
-                    if (token != null) {
-                        Net.download(info.assetUrl, apk, token, "application/octet-stream") { _, _ -> }
-                    } else {
-                        Net.download(info.publicUrl, apk, null, "application/octet-stream") { _, _ -> }
-                    }
-                    if (Updater.install(ctx, apk)) "صفحه نصب باز شد" else "اجازه نصب برنامه‌ها رو برای KavirDL روشن کن و دوباره بزن"
+                val newer = Updater.isNewer(info.tag, cur)
+                withContext(Dispatchers.Main) {
+                    updLatest = info.tag
+                    updNotes = info.notes
+                    updAvailable = newer
+                    updInfo = info
                 }
+                if (newer) "نسخه جدید آماده‌ست" else "آخرین نسخه رو داری ($cur)"
             } catch (e: Throwable) {
-                "ناموفق: ${nice(e)}"
+                "بررسی ناموفق: ${nice(e)}"
             }
             withContext(Dispatchers.Main) {
                 updMsg = msg
+                settingsBusy = false
+            }
+        }
+    }
+
+    fun installUpdate() {
+        val info = updInfo ?: return
+        if (settingsBusy) return
+        settingsBusy = true
+        updProgress = 0f
+        updMsg = "در حال دانلود ${info.tag}..."
+        viewModelScope.launch(Dispatchers.IO) {
+            val msg = try {
+                val apk = File(ctx.cacheDir, "update/KavirDL.apk")
+                apk.parentFile?.mkdirs()
+                var last = 0L
+                Net.download(info.publicUrl, apk, null, "application/octet-stream") { read, total ->
+                    val now = System.currentTimeMillis()
+                    if (total > 0 && now - last > 250) {
+                        last = now
+                        updProgress = read.toFloat() / total
+                    }
+                }
+                if (apk.length() < 100_000) throw RuntimeException("فایل دانلودشده ناقصه")
+                if (Updater.install(ctx, apk)) "صفحه نصب باز شد" else "اجازه نصب برنامه‌ها رو برای KavirDL روشن کن و دوباره بزن"
+            } catch (e: Throwable) {
+                "دانلود یا نصب ناموفق: ${nice(e)}"
+            }
+            withContext(Dispatchers.Main) {
+                updMsg = msg
+                updProgress = -1f
                 settingsBusy = false
             }
         }
