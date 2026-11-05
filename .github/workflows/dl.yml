@@ -29,13 +29,19 @@ permissions:
 jobs:
   download:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       URL: ${{ inputs.url }}
       QUALITY: ${{ inputs.quality }}
       AUDIO: ${{ inputs.audio }}
       JOB: ${{ inputs.job }}
+      GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Announce
+        run: |
+          gh release create "dl-$JOB" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "dl $JOB" --notes '{"phase":"setup","percent":-1}' --prerelease --latest=false
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
@@ -65,7 +71,8 @@ jobs:
       - name: Download
         run: python3 .github/scripts/dl.py
 
-      - name: Publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "dl-$JOB" out/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "dl $JOB" --notes "temporary" --prerelease
+      - name: Upload result
+        run: |
+          gh release upload "dl-$JOB" out/* --repo "$GITHUB_REPOSITORY" --clobber
+          ID=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/dl-$JOB" --jq .id)
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" -f body='{"phase":"done","percent":1}'

@@ -3,6 +3,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -11,10 +12,50 @@ URL = os.environ["URL"].strip()
 QUALITY = os.environ.get("QUALITY", "720").strip()
 AUDIO = os.environ.get("AUDIO", "false") == "true" or QUALITY == "audio"
 WARP = os.environ.get("PROXY", "")
+JOB = os.environ.get("JOB", "")
+REPO = os.environ.get("GITHUB_REPOSITORY", "")
+TOKEN = os.environ.get("GH_TOKEN", "")
 OUT = Path("out")
 OUT.mkdir(exist_ok=True)
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 MEDIA = {"mp4", "mkv", "webm", "mov", "mp3", "m4a", "opus", "ogg", "wav", "flac", "gif", "png", "jpg", "jpeg", "webp"}
+
+STATE = {"phase": "download", "title": "", "thumb": "", "percent": -1, "downloaded": 0, "total": 0, "speed": 0, "eta": -1, "index": 1, "count": 1}
+_last = 0.0
+_rel = None
+
+
+def gh(method, path, payload=None):
+    req = urllib.request.Request(
+        "https://api.github.com" + path,
+        data=json.dumps(payload).encode() if payload is not None else None,
+        method=method,
+        headers={
+            "Authorization": "Bearer " + TOKEN,
+            "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json",
+            "User-Agent": "kavirdl",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.loads(r.read().decode() or "{}")
+
+
+def report(force=False, **kw):
+    global _last, _rel
+    STATE.update(kw)
+    now = time.time()
+    if not force and now - _last < 2:
+        return
+    _last = now
+    if not (TOKEN and REPO and JOB):
+        return
+    try:
+        if _rel is None:
+            _rel = gh("GET", f"/repos/{REPO}/releases/tags/dl-{JOB}")["id"]
+        gh("PATCH", f"/repos/{REPO}/releases/{_rel}", {"body": json.dumps(STATE, ensure_ascii=False)})
+    except Exception as e:
+        print("report failed:", e)
 
 
 def fetch(url):
@@ -26,11 +67,17 @@ def fetch(url):
 def save_file(url, path):
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=60) as r, open(path, "wb") as f:
+        total = int(r.headers.get("Content-Length") or 0)
+        got = 0
+        t0 = time.time()
         while True:
             chunk = r.read(65536)
             if not chunk:
                 break
             f.write(chunk)
+            got += len(chunk)
+            sp = got / max(time.time() - t0, 0.001)
+            report(percent=(got / total) if total else -1, downloaded=got, total=total, speed=int(sp), eta=int((total - got) / sp) if total and sp else -1)
 
 
 def safe(s):
@@ -47,17 +94,74 @@ def video_format():
     return "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b"
 
 
-def ytdlp(target, name=None, audio=False, search=False):
-    template = str(OUT / ((name if name else "%(title).80s") + ".%(ext)s"))
-    base = [
-        "yt-dlp", "--no-warnings", "--no-mtime", "--retries", "10",
-        "--fragment-retries", "10", "--concurrent-fragments", "4", "-o", template,
+def num(x):
+    try:
+        return float(x)
+    except Exception:
+        return 0.0
+
+
+def probe(cmd):
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        print(r.stderr[-800:])
+        return None
+    try:
+        info = json.loads(r.stdout)
+    except Exception:
+        return None
+    if info.get("_type") == "playlist":
+        entries = [e for e in (info.get("entries") or []) if e]
+        if not entries:
+            return None
+        info = entries[0]
+    return info
+
+
+def run_download(cmd, expected_total, track_index, track_count):
+    cmd = cmd + [
+        "--newline",
+        "--progress-template",
+        "download:PROG|%(progress.filename)s|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s",
     ]
-    base += ["--playlist-items", "1"] if search else ["--no-playlist"]
-    if audio:
-        base += ["-x", "--audio-format", "mp3", "--audio-quality", "0", "--embed-metadata"]
-    else:
-        base += ["-f", video_format(), "--merge-output-format", "mp4"]
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    seen = {}
+    totals = {}
+    t0 = time.time()
+    for line in p.stdout:
+        sys.stdout.write(line)
+        if not line.startswith("PROG|"):
+            continue
+        try:
+            fname, dl, tb, te, sp = line.strip()[5:].rsplit("|", 4)
+        except ValueError:
+            continue
+        seen[fname] = max(seen.get(fname, 0), int(num(dl)))
+        st = int(num(tb)) or int(num(te))
+        if st:
+            totals[fname] = max(totals.get(fname, 0), st)
+        done = sum(seen.values())
+        total = max(expected_total, sum(totals.values()))
+        speed = num(sp)
+        if speed <= 0:
+            speed = done / max(time.time() - t0, 0.001)
+        frac = (done / total) if total else -1
+        if frac > 1:
+            frac = 1
+        if track_count > 1:
+            overall = ((track_index + (frac if frac >= 0 else 0)) / track_count)
+            report(percent=overall, downloaded=0, total=0, speed=int(speed), eta=-1, index=track_index + 1, count=track_count)
+        else:
+            eta = int((total - done) / speed) if total and speed > 0 else -1
+            report(percent=frac, downloaded=done, total=total, speed=int(speed), eta=eta)
+    return p.wait()
+
+
+def ytdlp(target, name=None, audio=False, search=False, track_index=0, track_count=1):
+    template = str(OUT / ((name if name else "%(title).80s") + ".%(ext)s"))
+    common = ["yt-dlp", "--no-warnings", "--no-mtime", "--retries", "10", "--fragment-retries", "10"]
+    common += ["--playlist-items", "1"] if search else ["--no-playlist"]
+    fmt = ["-f", "ba/b"] if audio else ["-f", video_format()]
     yt = target.startswith("ytsearch") or "youtu" in target or "instagram" in target
     if yt and WARP:
         proxies = [WARP, ""]
@@ -68,8 +172,22 @@ def ytdlp(target, name=None, audio=False, search=False):
     extras = [[], ["--extractor-args", "youtube:player_client=android,ios"], ["--js-runtimes", "node"]] if yt else [[]]
     for p in proxies:
         for extra in extras:
-            cmd = base + (["--proxy", p] if p else []) + extra + [target]
-            if subprocess.run(cmd).returncode == 0:
+            px = ["--proxy", p] if p else []
+            info = probe(common + fmt + px + extra + ["-J", target])
+            if info is None:
+                continue
+            formats = info.get("requested_formats") or [info]
+            sizes = [f.get("filesize") or f.get("filesize_approx") or 0 for f in formats]
+            expected = sum(sizes) if all(sizes) else 0
+            title = info.get("title") or ""
+            if track_count == 1:
+                report(force=True, title=title, thumb=info.get("thumbnail") or "", percent=0 if expected else -1, total=expected, downloaded=0, speed=0, eta=-1)
+            dl = common + ["-o", template] + fmt + px + extra
+            if audio:
+                dl += ["-x", "--audio-format", "mp3", "--audio-quality", "0", "--embed-metadata"]
+            else:
+                dl += ["--merge-output-format", "mp4"]
+            if run_download(dl + [target], expected, track_index, track_count) == 0:
                 return True
     return False
 
@@ -79,7 +197,7 @@ def spotify(url):
         _, url = fetch(url)
     m = re.search(r"open\.spotify\.com/(?:intl-[a-zA-Z-]+/)?(track|album|playlist)/([A-Za-z0-9]+)", url)
     if not m:
-        sys.exit("bad spotify link")
+        sys.exit("لینک اسپاتیفای معتبر نیست")
     kind, sid = m.group(1), m.group(2)
     html, _ = fetch(f"https://open.spotify.com/embed/{kind}/{sid}")
     tracks = []
@@ -110,11 +228,13 @@ def spotify(url):
         oe, _ = fetch("https://open.spotify.com/oembed?url=" + urllib.parse.quote(f"https://open.spotify.com/{kind}/{sid}"))
         title = json.loads(oe).get("title", "")
         if not title:
-            sys.exit("spotify metadata not found")
+            sys.exit("اطلاعات آهنگ از اسپاتیفای گرفته نشد")
         tracks = [(title, "")]
-    for title, artist in tracks:
+    n = len(tracks)
+    for i, (title, artist) in enumerate(tracks):
         q = f"{artist} - {title}" if artist else title
-        ytdlp(f"ytsearch1:{q} audio", name=safe(q), audio=True, search=True)
+        report(force=True, title=q, thumb="", percent=i / n, index=i + 1, count=n, downloaded=0, total=0, speed=0, eta=-1)
+        ytdlp(f"ytsearch1:{q} audio", name=safe(q), audio=True, search=True, track_index=i, track_count=n)
 
 
 def pinterest(url):
@@ -127,17 +247,18 @@ def pinterest(url):
         if mp4:
             save_file(mp4.group(0).replace("\\/", "/"), OUT / "pin_video.mp4")
             return
-        sys.exit("pinterest video not found")
+        sys.exit("ویدیوی پینترست پیدا نشد")
     og = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)', html) or re.search(
         r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', html
     )
     if not og:
-        sys.exit("pinterest image not found")
+        sys.exit("عکس پینترست پیدا نشد")
     u = og.group(1).replace("&amp;", "&")
     ext = u.rsplit(".", 1)[-1].split("?")[0].lower()
     if ext not in ("gif", "png", "webp", "jpg", "jpeg"):
         ext = "jpg"
     target = OUT / f"pin_image.{ext}"
+    report(force=True, title="Pinterest", thumb=u, percent=-1)
     up = re.sub(r"pinimg\.com/\d+x/", "pinimg.com/originals/", u)
     try:
         save_file(up, target)
@@ -145,29 +266,42 @@ def pinterest(url):
         save_file(u, target)
 
 
-low = URL.lower()
-if "spotify.com" in low or "spotify.link" in low:
-    spotify(URL)
-elif "pinterest." in low or "pin.it" in low:
-    pinterest(URL)
-else:
-    if not ytdlp(URL, audio=AUDIO):
-        sys.exit("download failed")
+def main():
+    low = URL.lower()
+    if "spotify.com" in low or "spotify.link" in low:
+        spotify(URL)
+    elif "pinterest." in low or "pin.it" in low:
+        pinterest(URL)
+    else:
+        if not ytdlp(URL, audio=AUDIO):
+            sys.exit("دانلود ناموفق بود. لینک رو چک کن یا بعداً دوباره امتحان کن")
 
-files = sorted(f for f in OUT.iterdir() if f.is_file() and f.suffix.lower().lstrip(".") in MEDIA and f.stat().st_size > 0)
-for f in OUT.iterdir():
-    if f.is_file() and f not in files:
-        f.unlink()
-if not files:
-    sys.exit("no files produced")
+    files = sorted(f for f in OUT.iterdir() if f.is_file() and f.suffix.lower().lstrip(".") in MEDIA and f.stat().st_size > 0)
+    for f in OUT.iterdir():
+        if f.is_file() and f not in files:
+            f.unlink()
+    if not files:
+        sys.exit("هیچ فایلی تولید نشد")
 
-meta = []
-for i, f in enumerate(files, 1):
-    original = f.name
-    slug = re.sub(r"[^A-Za-z0-9]+", "_", f.stem).strip("_")[:40] or "file"
-    new = OUT / f"{i:02d}_{slug}{f.suffix.lower()}"
-    if new != f:
-        f.rename(new)
-    meta.append({"asset": new.name, "name": original})
-(OUT / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
-print(json.dumps(meta, ensure_ascii=False))
+    meta = []
+    for i, f in enumerate(files, 1):
+        original = f.name
+        slug = re.sub(r"[^A-Za-z0-9]+", "_", f.stem).strip("_")[:40] or "file"
+        new = OUT / f"{i:02d}_{slug}{f.suffix.lower()}"
+        if new != f:
+            f.rename(new)
+        meta.append({"asset": new.name, "name": original})
+    (OUT / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    report(force=True, phase="uploading", percent=-1, speed=0, eta=-1)
+    print(json.dumps(meta, ensure_ascii=False))
+
+
+try:
+    main()
+except SystemExit as e:
+    if e.code not in (0, None):
+        report(force=True, phase="error", message=str(e.code))
+    raise
+except Exception as e:
+    report(force=True, phase="error", message=str(e)[:300])
+    raise
