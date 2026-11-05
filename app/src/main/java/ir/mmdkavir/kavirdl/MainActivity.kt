@@ -344,15 +344,11 @@ fun TaskCard(t: Task, vm: MainVM, modifier: Modifier) {
                             }
                         }
                         OutlinedButton(onClick = {
-                            try {
-                                Opener.view(ctx, t.doneFiles.first(), t.mime)
-                            } catch (_: Throwable) {
-                                Toast.makeText(ctx, "برنامه‌ای برای باز کردن پیدا نشد", Toast.LENGTH_SHORT).show()
-                            }
+                            PlayerActivity.open(ctx, t.doneFiles.first(), t.title, t.thumb)
                         }) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.size(6.dp))
-                            Text("باز کردن")
+                            Text("پخش")
                         }
                         OutlinedButton(onClick = {
                             try {
