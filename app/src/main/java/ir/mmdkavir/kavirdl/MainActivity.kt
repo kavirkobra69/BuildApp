@@ -87,6 +87,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -117,12 +118,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val dark = isSystemInDarkTheme()
             val c = LocalContext.current
-            val scheme = when {
-                Build.VERSION.SDK_INT >= 31 && dark -> dynamicDarkColorScheme(c)
-                Build.VERSION.SDK_INT >= 31 -> dynamicLightColorScheme(c)
-                dark -> darkColorScheme()
-                else -> lightColorScheme()
-            }
+            val scheme = if (Build.VERSION.SDK_INT >= 31) dynamicDarkColorScheme(c) else darkColorScheme()
             MaterialTheme(
                 colorScheme = scheme,
                 shapes = androidx.compose.material3.Shapes(
@@ -226,7 +222,19 @@ fun Home(vm: MainVM) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 listOf("best" to "بهترین", "1080" to "1080", "720" to "720", "480" to "480", "audio" to "فقط صدا (mp3)").forEach { (k, label) ->
-                    FilterChip(selected = vm.quality == k, onClick = { vm.pickQuality(k) }, label = { Text(label) })
+                    val sel = vm.quality == k
+                    FilterChip(
+                        selected = sel,
+                        onClick = { vm.pickQuality(k) },
+                        label = { Text(label, fontWeight = if (sel) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal) },
+                        leadingIcon = if (sel) ({ Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }) else null,
+                        shape = RoundedCornerShape(14.dp),
+                        colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primary,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                            selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary
+                        )
+                    )
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -239,6 +247,7 @@ fun Home(vm: MainVM) {
                 Text(
                     vm.status,
                     style = MaterialTheme.typography.bodySmall,
+                    color = Color.White,
                     modifier = Modifier.padding(vertical = 6.dp),
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis
@@ -256,6 +265,7 @@ fun Home(vm: MainVM) {
                     Text(
                         "لینک یوتیوب، اینستاگرام، تیک‌تاک، اسپاتیفای یا پینترست رو بذار. دانلود روی ریپوی گیت‌هاب خودت انجام می‌شه؛ اول توی تنظیمات وصلش کن و «ساخت پیکربندی» رو بزن.",
                         style = MaterialTheme.typography.bodySmall,
+                        color = Color.White,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.padding(top = 6.dp)
                     )
@@ -514,19 +524,24 @@ fun SettingsScreen(vm: MainVM, onGuide: () -> Unit, onIntro: () -> Unit) {
     }
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        SCard {
         Text("اتصال به گیت‌هاب شخصی", style = MaterialTheme.typography.titleMedium)
         Text(
             "هر کاربر باید حساب و ریپوی خودش رو وصل کنه و همه دانلودها فقط توی همون ریپو اجرا می‌شن. " +
                 "توکن Fine-grained فقط برای همون ریپو با دسترسی Contents، Actions و Workflows روی Read and write. " +
                 "برای ساخت ریپوی جدید توکن Classic با scope های repo و workflow لازمه. توکن رمزگذاری‌شده با Android Keystore نگه‌داری می‌شه.",
-            style = MaterialTheme.typography.bodySmall
+            style = MaterialTheme.typography.bodySmall, color = Color.White
         )
         if (vm.connRepo.isNotBlank()) {
-            Text("وصل به: ${vm.connLogin} / ${vm.connRepo}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+            Text(
+                "وصل به: ${vm.connLogin} / ${vm.connRepo}" + if (vm.branch.isNotBlank()) " · شاخه: ${vm.branch}" else "",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White
+            )
         } else {
-            Text("وصل نیست", style = MaterialTheme.typography.bodyMedium)
+            Text("وصل نیست", style = MaterialTheme.typography.bodyMedium, color = Color.White)
         }
         OutlinedTextField(
             value = vm.ghToken,
@@ -587,14 +602,15 @@ fun SettingsScreen(vm: MainVM, onGuide: () -> Unit, onIntro: () -> Unit) {
             if (vm.setupProgress in 0f..1f) LinearProgressIndicator(progress = { vm.setupProgress }, modifier = Modifier.fillMaxWidth())
             else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
-        if (vm.dlMsg.isNotBlank()) Text(vm.dlMsg, style = MaterialTheme.typography.bodyMedium)
-        HorizontalDivider()
+        if (vm.dlMsg.isNotBlank()) Text(vm.dlMsg, style = MaterialTheme.typography.bodyMedium, color = Color.White)
+        }
+        SCard {
         Text("آپدیت برنامه", style = MaterialTheme.typography.titleMedium)
-        Text("نسخه نصب‌شده: ${vm.versionName}", style = MaterialTheme.typography.bodyMedium)
-        if (vm.updLatest.isNotBlank()) Text("آخرین نسخه: ${vm.updLatest}", style = MaterialTheme.typography.bodyMedium)
+        Text("نسخه نصب‌شده: ${vm.versionName}", style = MaterialTheme.typography.bodyMedium, color = Color.White)
+        if (vm.updLatest.isNotBlank()) Text("آخرین نسخه: ${vm.updLatest}", style = MaterialTheme.typography.bodyMedium, color = Color.White)
         if (vm.updNotes.isNotBlank()) {
             Text("تغییرات:", style = MaterialTheme.typography.labelLarge)
-            Text(vm.updNotes.take(1500), style = MaterialTheme.typography.bodySmall)
+            Text(vm.updNotes.take(1500), style = MaterialTheme.typography.bodySmall, color = Color.White)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { vm.checkUpdate() }, enabled = !vm.settingsBusy) { Text("بررسی آپدیت") }
@@ -604,10 +620,12 @@ fun SettingsScreen(vm: MainVM, onGuide: () -> Unit, onIntro: () -> Unit) {
             LinearProgressIndicator(progress = { vm.updProgress }, modifier = Modifier.fillMaxWidth())
             Text("${(vm.updProgress * 100).toInt()}٪", style = MaterialTheme.typography.labelMedium)
         }
-        if (vm.updMsg.isNotBlank()) Text(vm.updMsg, style = MaterialTheme.typography.bodyMedium)
-        HorizontalDivider()
+        if (vm.updMsg.isNotBlank()) Text(vm.updMsg, style = MaterialTheme.typography.bodyMedium, color = Color.White)
+        }
+        SCard {
         PlayerSettings()
-        HorizontalDivider()
+        }
+        SCard {
         Text("محل ذخیره", style = MaterialTheme.typography.titleMedium)
         Row(verticalAlignment = Alignment.CenterVertically) {
             RadioButton(selected = vm.saveMode == "gallery", onClick = { vm.pickSaveMode("gallery") })
@@ -620,5 +638,17 @@ fun SettingsScreen(vm: MainVM, onGuide: () -> Unit, onIntro: () -> Unit) {
             Text(if (folderName.isEmpty()) "پوشه دلخواه" else "پوشه: $folderName")
         }
         OutlinedButton(onClick = { picker.launch(null) }) { Text("انتخاب پوشه") }
+        }
+    }
+}
+
+@Composable
+fun SCard(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    Card(
+        Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
     }
 }

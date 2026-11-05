@@ -19,7 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.ScreenRotationAlt
-import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.RotateLeft
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -144,7 +144,6 @@ class PlayerActivity : ComponentActivity() {
         player = p
         if (file.exists()) {
             p.setMediaItem(MediaItem.fromUri(android.net.Uri.fromFile(file)))
-            if (isVideo) p.setPlaybackSpeed(Prefs.str(this, "pl_speed", "1.0").toFloatOrNull() ?: 1f)
             val saved = Prefs.str(this, posKey(file), "0").toLongOrNull() ?: 0L
             if (Prefs.str(this, "pl_remember", "1") == "1" && saved > 3000) p.seekTo(saved)
             p.prepare()
@@ -453,9 +452,6 @@ private fun VideoScreen(p: ExoPlayer, file: File, title: String, isFull: Boolean
     var rot by remember { mutableIntStateOf((Prefs.str(ctx, PlayerActivity.rotKey(file), "0").toIntOrNull() ?: 0) % 360) }
     var visible by remember { mutableStateOf(true) }
     var touch by remember { mutableIntStateOf(0) }
-    var speed by remember { mutableFloatStateOf(p.playbackParameters.speed) }
-    var speedMenu by remember { mutableStateOf(false) }
-    var rotMenu by remember { mutableStateOf(false) }
     var seekHint by remember { mutableStateOf("") }
 
     fun setRot(r: Int) {
@@ -496,8 +492,8 @@ private fun VideoScreen(p: ExoPlayer, file: File, title: String, isFull: Boolean
             delay(250)
         }
     }
-    LaunchedEffect(visible, playing, touch, speedMenu, rotMenu, dragging) {
-        if (visible && playing && !speedMenu && !rotMenu && !dragging) {
+    LaunchedEffect(visible, playing, touch, dragging) {
+        if (visible && playing && !dragging) {
             delay(hideMs)
             visible = false
         }
@@ -568,29 +564,8 @@ private fun VideoScreen(p: ExoPlayer, file: File, title: String, isFull: Boolean
                     title.ifBlank { file.nameWithoutExtension }, color = Color.White, maxLines = 1,
                     overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 8.dp)
                 )
-                Box {
-                    IconButton(onClick = { rotMenu = true; touch++ }) {
-                        Icon(Icons.Default.ScreenRotationAlt, contentDescription = "Rotate video", tint = Color.White)
-                    }
-                    DropdownMenu(rotMenu, { rotMenu = false }) {
-                        DropdownMenuItem(text = { Text("Rotate 90° clockwise") }, onClick = { setRot(rot + 90); rotMenu = false })
-                        DropdownMenuItem(text = { Text("Rotate 90° counterclockwise") }, onClick = { setRot(rot - 90); rotMenu = false })
-                        DropdownMenuItem(text = { Text("Rotate 180°") }, onClick = { setRot(rot + 180); rotMenu = false })
-                        DropdownMenuItem(text = { Text("Reset rotation (0°)") }, onClick = { setRot(0); rotMenu = false })
-                    }
-                }
-                Box {
-                    IconButton(onClick = { speedMenu = true; touch++ }) {
-                        Icon(Icons.Default.Speed, contentDescription = "Playback speed", tint = Color.White)
-                    }
-                    DropdownMenu(speedMenu, { speedMenu = false }) {
-                        listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f).forEach { sp ->
-                            DropdownMenuItem(
-                                text = { Text((if (sp == speed) "● " else "") + "${sp}x") },
-                                onClick = { p.setPlaybackSpeed(sp); speed = sp; speedMenu = false }
-                            )
-                        }
-                    }
+                IconButton(onClick = { setRot(rot - 90) }) {
+                    Icon(Icons.Default.RotateLeft, contentDescription = "Rotate left 90°", tint = Color.White)
                 }
                 IconButton(onClick = onFullscreen) {
                     Icon(if (isFull) Icons.Default.FullscreenExit else Icons.Default.Fullscreen, contentDescription = "Fullscreen", tint = Color.White)
@@ -670,18 +645,11 @@ private fun VideoScreen(p: ExoPlayer, file: File, title: String, isFull: Boolean
 @Composable
 fun PlayerSettings() {
     val ctx = LocalContext.current
-    var speed by remember { mutableStateOf(Prefs.str(ctx, "pl_speed", "1.0")) }
     var hide by remember { mutableStateOf(Prefs.str(ctx, "pl_hide", "4")) }
     var orient by remember { mutableStateOf(Prefs.str(ctx, "pl_orient", "auto")) }
     var remember by remember { mutableStateOf(Prefs.str(ctx, "pl_remember", "1")) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("تنظیمات پخش‌کننده", style = MaterialTheme.typography.titleMedium)
-        Text("سرعت پیش‌فرض ویدیو", style = MaterialTheme.typography.labelLarge)
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("0.5", "0.75", "1.0", "1.25", "1.5", "2.0").forEach {
-                FilterChip(selected = speed == it, onClick = { speed = it; Prefs.setStr(ctx, "pl_speed", it) }, label = { Text("${it}x") })
-            }
-        }
         Text("مخفی شدن خودکار کنترل‌ها (ثانیه)", style = MaterialTheme.typography.labelLarge)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("2", "4", "6", "8").forEach {
