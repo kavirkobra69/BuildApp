@@ -169,7 +169,17 @@ def ytdlp(target, name=None, audio=False, search=False, track_index=0, track_cou
         proxies = ["", WARP]
     else:
         proxies = [""]
-    extras = [[], ["--extractor-args", "youtube:player_client=android,ios"], ["--js-runtimes", "node"]] if yt else [[]]
+    extras = (
+        [
+            [],
+            ["--extractor-args", "youtube:player_client=android_vr"],
+            ["--extractor-args", "youtube:player_client=tv_simply,mweb"],
+            ["--extractor-args", "youtube:player_client=android,ios"],
+            ["--js-runtimes", "node"],
+        ]
+        if yt
+        else [[]]
+    )
     for p in proxies:
         for extra in extras:
             px = ["--proxy", p] if p else []

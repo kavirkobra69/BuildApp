@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: '17 */6 * * *'
   workflow_dispatch:
+    inputs:
+      hours:
+        description: Delete dl releases older than this many hours
+        required: false
+        default: '3'
+        type: string
 
 permissions:
   contents: write
@@ -13,10 +19,11 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
+      HOURS: ${{ inputs.hours }}
     steps:
       - name: Delete stale dl releases
         run: |
-          LIMIT=$(date -u -d '3 hours ago' +%s)
+          LIMIT=$(date -u -d "${HOURS:-3} hours ago" +%s)
           gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate --jq '.[] | select(.tag_name | startswith("dl-")) | "\(.id) \(.tag_name) \(.created_at)"' | while read -r ID TAG CREATED; do
             TS=$(date -u -d "$CREATED" +%s)
             if [ "$TS" -lt "$LIMIT" ]; then
