@@ -25,6 +25,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -41,6 +42,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
@@ -51,6 +56,8 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Surface
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -155,136 +162,243 @@ fun Root(vm: MainVM) {
     }
 }
 
+private fun fmtSize(ctx: Context, b: Long) = Formatter.formatShortFileSize(ctx, b)
+
+private fun fmtEta(sec: Long): String {
+    if (sec < 0) return "—"
+    val m = sec / 60
+    val s = sec % 60
+    return if (m > 0) "${m}:${s.toString().padStart(2, '0')}" else "${s}s"
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun Home(vm: MainVM) {
     val ctx = LocalContext.current
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
-        OutlinedTextField(
-            value = vm.url,
-            onValueChange = { vm.url = it },
-            label = { Text("لینک ویدیو، آهنگ یا عکس") },
-            maxLines = 3,
-            modifier = Modifier.fillMaxWidth(),
-            trailingIcon = {
-                IconButton(onClick = {
-                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    val t = cm.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString()
-                    if (!t.isNullOrBlank()) vm.url = t
-                }) {
-                    Icon(Icons.Default.ContentPaste, contentDescription = "جایگذاری")
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.weight(1f).padding(horizontal = 16.dp, vertical = 8.dp)) {
+            OutlinedTextField(
+                value = vm.url,
+                onValueChange = { vm.url = it },
+                label = { Text("لینک ویدیو، آهنگ یا عکس") },
+                maxLines = 3,
+                modifier = Modifier.fillMaxWidth(),
+                trailingIcon = {
+                    IconButton(onClick = {
+                        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val t = cm.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString()
+                        if (!t.isNullOrBlank()) vm.url = t
+                    }) {
+                        Icon(Icons.Default.ContentPaste, contentDescription = "جایگذاری")
+                    }
+                }
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf("best" to "بهترین", "1080" to "1080", "720" to "720", "480" to "480", "audio" to "فقط صدا (mp3)").forEach { (k, label) ->
+                    FilterChip(selected = vm.quality == k, onClick = { vm.pickQuality(k) }, label = { Text(label) })
                 }
             }
-        )
-        Spacer(Modifier.height(8.dp))
-        Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            listOf("best" to "بهترین", "1080" to "1080", "720" to "720", "480" to "480", "audio" to "فقط صدا (mp3)").forEach { (k, label) ->
-                FilterChip(selected = vm.quality == k, onClick = { vm.pickQuality(k) }, label = { Text(label) })
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        Button(
-            onClick = { if (vm.busy) vm.cancel() else vm.start() },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(if (vm.busy) "لغو" else "دانلود")
-        }
-        if (vm.busy) {
             Spacer(Modifier.height(8.dp))
-            if (vm.progress in 0f..1f) {
-                LinearProgressIndicator(progress = { vm.progress }, modifier = Modifier.fillMaxWidth())
-            } else {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            Button(onClick = { vm.start() }, modifier = Modifier.fillMaxWidth()) { Text("دانلود") }
+            if (vm.status.isNotBlank()) {
+                Text(
+                    vm.status,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(vertical = 6.dp),
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (vm.tasks.isEmpty()) {
+                Text(
+                    "لینک یوتیوب، اینستاگرام، تیک‌تاک، اسپاتیفای یا پینترست رو بذار. چند دانلود همزمان هم ممکنه. دانلود روی گیت‌هاب انجام می‌شه؛ فقط توکن رو توی تنظیمات وارد کن.",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(vertical = 12.dp)
+                )
             }
         }
-        if (vm.status.isNotBlank()) {
-            Text(
-                vm.status,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(vertical = 6.dp),
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-        if (vm.items.count { !it.saved } > 1) {
-            OutlinedButton(onClick = { vm.saveAll() }, modifier = Modifier.fillMaxWidth()) {
-                Text("ذخیره همه")
+        if (vm.tasks.isNotEmpty()) {
+            Surface(
+                tonalElevation = 6.dp,
+                shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(top = 10.dp)) {
+                    val active = vm.tasks.count { it.state == St.QUEUED || it.state == St.RUNNING }
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "دانلودها (${vm.tasks.size})" + if (active > 0) " · $active فعال" else "",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (vm.tasks.any { it.state == St.DONE }) {
+                            TextOnly("پاک کردن تمام‌شده‌ها") { vm.clearFinished() }
+                        }
+                    }
+                    LazyColumn(
+                        Modifier.heightIn(max = 340.dp).padding(horizontal = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 8.dp)
+                    ) {
+                        items(vm.tasks, key = { it.id }) { TaskCard(it, vm, Modifier.animateItem()) }
+                    }
+                }
             }
-        }
-        Spacer(Modifier.height(8.dp))
-        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(vm.items, key = { it.id }) { ItemRow(it, vm) }
-        }
-        if (vm.items.isEmpty() && !vm.busy) {
-            Text(
-                "لینک یوتیوب، اینستاگرام، تیک‌تاک، اسپاتیفای یا پینترست رو بذار. دانلود روی گیت‌هاب انجام می‌شه؛ ریپو و توکن رو توی تنظیمات وارد کن.",
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(vertical = 12.dp)
-            )
         }
     }
 }
 
 @Composable
-fun ItemRow(item: Item, vm: MainVM) {
+fun TextOnly(text: String, onClick: () -> Unit) {
+    androidx.compose.material3.TextButton(onClick = onClick) { Text(text, style = MaterialTheme.typography.labelMedium) }
+}
+
+@Composable
+fun TaskCard(t: Task, vm: MainVM, modifier: Modifier) {
     val ctx = LocalContext.current
-    Card(Modifier.fillMaxWidth()) {
+    Card(modifier.fillMaxWidth()) {
         Column(Modifier.padding(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Thumb(item)
+                Thumb(t)
                 Spacer(Modifier.size(10.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(item.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(
-                        Formatter.formatShortFileSize(ctx, item.file.length()),
-                        style = MaterialTheme.typography.bodySmall
+                        t.title.ifBlank { t.src },
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    val stText = when (t.state) {
+                        St.QUEUED -> "در صف"
+                        St.RUNNING -> "در حال دانلود"
+                        St.DONE -> "تکمیل شد"
+                        St.FAILED -> "ناموفق"
+                    }
+                    Text(stText, style = MaterialTheme.typography.labelMedium, color = when (t.state) {
+                        St.FAILED -> MaterialTheme.colorScheme.error
+                        St.DONE -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    })
+                }
+                when (t.state) {
+                    St.QUEUED, St.RUNNING -> IconButton(onClick = { vm.cancel(t) }) {
+                        Icon(Icons.Default.Close, contentDescription = "لغو")
+                    }
+                    else -> IconButton(onClick = { vm.delete(t) }) {
+                        Icon(Icons.Default.Delete, contentDescription = "حذف")
+                    }
+                }
+            }
+            when (t.state) {
+                St.QUEUED, St.RUNNING -> {
+                    Spacer(Modifier.height(6.dp))
+                    val known = t.state == St.RUNNING && t.percent in 0f..1f
+                    val anim by animateFloatAsState(if (known) t.percent else 0f, label = "p")
+                    if (known) LinearProgressIndicator(progress = { anim }, modifier = Modifier.fillMaxWidth())
+                    else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(t.label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(if (known) "${(t.percent * 100).toInt()}٪" else "—", style = MaterialTheme.typography.labelMedium)
+                    }
+                    if (t.state == St.RUNNING && (t.total > 0 || t.speed > 0)) {
+                        val sz = if (t.total > 0) "${fmtSize(ctx, t.done)} از ${fmtSize(ctx, t.total)}" else fmtSize(ctx, t.done)
+                        val sp = if (t.speed > 0) " · ${fmtSize(ctx, t.speed)}/s" else ""
+                        Text("$sz$sp · باقی‌مانده ${fmtEta(t.eta)}", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+                St.FAILED -> {
+                    Text(t.error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                    Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { vm.retry(t) }) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.size(6.dp))
+                            Text("تلاش مجدد")
+                        }
+                        CopyLink(t.src)
+                    }
+                }
+                St.DONE -> {
+                    val size = t.doneFiles.sumOf { it.length() }
+                    Text(
+                        fmtSize(ctx, size) + if (t.doneFiles.size > 1) " · ${t.doneFiles.size} فایل" else "",
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (t.saved.isBlank()) {
+                            Button(onClick = { vm.save(t) }) {
+                                Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.size(6.dp))
+                                Text("ذخیره")
+                            }
+                        }
+                        OutlinedButton(onClick = {
+                            try {
+                                Opener.view(ctx, t.doneFiles.first(), t.mime)
+                            } catch (_: Throwable) {
+                                Toast.makeText(ctx, "برنامه‌ای برای باز کردن پیدا نشد", Toast.LENGTH_SHORT).show()
+                            }
+                        }) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.size(6.dp))
+                            Text("باز کردن")
+                        }
+                        OutlinedButton(onClick = {
+                            try {
+                                Opener.share(ctx, t.doneFiles.first(), t.mime)
+                            } catch (_: Throwable) {
+                                Toast.makeText(ctx, "اشتراک‌گذاری ممکن نشد", Toast.LENGTH_SHORT).show()
+                            }
+                        }) {
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.size(6.dp))
+                            Text("اشتراک")
+                        }
+                        CopyLink(t.src)
+                    }
+                    Text(
+                        if (t.saved.isNotBlank()) "ذخیره شد در: ${t.saved}" else "ذخیره‌شده داخل برنامه",
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(top = 4.dp)
                     )
                 }
             }
-            Spacer(Modifier.height(8.dp))
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (item.saved) {
-                    Icon(Icons.Default.Check, contentDescription = "ذخیره شد", tint = MaterialTheme.colorScheme.primary)
-                    Text("ذخیره شد", style = MaterialTheme.typography.bodySmall)
-                } else {
-                    Button(onClick = { vm.save(item) }) {
-                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.size(6.dp))
-                        Text("ذخیره")
-                    }
-                }
-                OutlinedButton(onClick = {
-                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    cm.setPrimaryClip(ClipData.newPlainText("link", item.src))
-                    Toast.makeText(ctx, "لینک کپی شد", Toast.LENGTH_SHORT).show()
-                }) {
-                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.size(6.dp))
-                    Text("کپی لینک")
-                }
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = { vm.delete(item) }) {
-                    Icon(Icons.Default.Delete, contentDescription = "حذف")
-                }
-            }
         }
     }
 }
 
 @Composable
-fun Thumb(item: Item) {
-    val bmp by produceState<ImageBitmap?>(null, item.file) {
+fun CopyLink(src: String) {
+    val ctx = LocalContext.current
+    OutlinedButton(onClick = {
+        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("link", src))
+        Toast.makeText(ctx, "لینک کپی شد", Toast.LENGTH_SHORT).show()
+    }) {
+        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.size(6.dp))
+        Text("کپی لینک")
+    }
+}
+
+@Composable
+fun Thumb(item: Task) {
+    val bmp by produceState<ImageBitmap?>(null, item.doneFiles, item.thumb) {
         value = withContext(Dispatchers.IO) { loadThumb(item) }
     }
     Box(
-        Modifier.size(64.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
+        Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center
     ) {
         val b = bmp
@@ -303,22 +417,25 @@ fun Thumb(item: Item) {
     }
 }
 
-private fun loadThumb(item: Item): ImageBitmap? = try {
-    when (item.kind) {
+private fun loadThumb(item: Task): ImageBitmap? = try {
+    val f = item.doneFiles.firstOrNull()
+    if (f == null || !f.exists()) {
+        if (item.thumb.startsWith("http")) Net.bitmap(item.thumb)?.asImageBitmap() else null
+    } else when (item.kind) {
         Kind.IMAGE -> {
             val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(item.file.absolutePath, o)
+            BitmapFactory.decodeFile(f.absolutePath, o)
             var s = 1
             while (o.outWidth / s > 256) s *= 2
             val o2 = BitmapFactory.Options().apply { inSampleSize = s }
-            BitmapFactory.decodeFile(item.file.absolutePath, o2)?.asImageBitmap()
+            BitmapFactory.decodeFile(f.absolutePath, o2)?.asImageBitmap()
         }
         Kind.VIDEO -> {
             val r = MediaMetadataRetriever()
             try {
-                r.setDataSource(item.file.absolutePath)
-                val f = r.getFrameAtTime(0)
-                f?.let {
+                r.setDataSource(f.absolutePath)
+                val fr = r.getFrameAtTime(0)
+                fr?.let {
                     val w = 256
                     val h = (it.height * w / it.width.toFloat()).toInt().coerceAtLeast(1)
                     Bitmap.createScaledBitmap(it, w, h, true).asImageBitmap()
@@ -327,7 +444,7 @@ private fun loadThumb(item: Item): ImageBitmap? = try {
                 r.release()
             }
         }
-        Kind.AUDIO -> null
+        Kind.AUDIO -> if (item.thumb.startsWith("http")) Net.bitmap(item.thumb)?.asImageBitmap() else null
     }
 } catch (_: Throwable) {
     null
@@ -346,22 +463,15 @@ fun SettingsScreen(vm: MainVM) {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("۱) دانلود ویدیو (GitHub Actions)", style = MaterialTheme.typography.titleMedium)
+        Text("توکن گیت‌هاب", style = MaterialTheme.typography.titleMedium)
         Text(
-            "لینک یا اسم ریپویی که ورک‌فلوی dl.yml توشه، و توکن با دسترسی Contents و Actions روی Read and write.",
+            "فقط یه توکن (Fine-grained) برای ریپوی BuildApp با دسترسی Contents و Actions روی Read and write. دانلود و آپدیت هر دو با همین کار می‌کنه.",
             style = MaterialTheme.typography.bodySmall
-        )
-        OutlinedTextField(
-            value = vm.ghRepo,
-            onValueChange = { vm.ghRepo = it },
-            label = { Text("لینک ریپوی دانلود") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
         )
         OutlinedTextField(
             value = vm.ghToken,
             onValueChange = { vm.ghToken = it },
-            label = { Text("توکن گیت‌هاب برای دانلود") },
+            label = { Text("توکن گیت‌هاب") },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth()
@@ -372,26 +482,7 @@ fun SettingsScreen(vm: MainVM) {
         }
         if (vm.dlMsg.isNotBlank()) Text(vm.dlMsg, style = MaterialTheme.typography.bodyMedium)
         HorizontalDivider()
-        Text("۲) آپدیت برنامه", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "لینک ریپویی که نسخه‌های برنامه توش Release می‌شه. اگه ریپو public ـه توکن نذار.",
-            style = MaterialTheme.typography.bodySmall
-        )
-        OutlinedTextField(
-            value = vm.updRepo,
-            onValueChange = { vm.updRepo = it },
-            label = { Text("لینک ریپوی برنامه") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-        OutlinedTextField(
-            value = vm.updToken,
-            onValueChange = { vm.updToken = it },
-            label = { Text("توکن آپدیت (اختیاری)") },
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth()
-        )
+        Text("آپدیت برنامه", style = MaterialTheme.typography.titleMedium)
         Text("نسخه فعلی: ${vm.versionName}", style = MaterialTheme.typography.bodyMedium)
         Button(onClick = { vm.checkUpdate() }, enabled = !vm.settingsBusy) { Text("بررسی آپدیت") }
         if (vm.updMsg.isNotBlank()) Text(vm.updMsg, style = MaterialTheme.typography.bodyMedium)

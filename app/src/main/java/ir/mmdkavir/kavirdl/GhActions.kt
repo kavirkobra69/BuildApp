@@ -4,145 +4,24 @@ import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.net.URLEncoder
+import java.io.IOException
+
+data class Update(
+    val label: String,
+    val percent: Float = -1f,
+    val done: Long = 0,
+    val total: Long = 0,
+    val speed: Long = 0,
+    val eta: Long = -1,
+    val title: String = "",
+    val thumb: String = ""
+)
 
 object GhActions {
+    const val REPO = "kavirkobra69/BuildApp"
     private const val WORKFLOW = "dl.yml"
-    private const val LEGACY = "YT-downloader.yml"
 
-    fun normRepo(s: String): String {
-        val t = s.trim()
-            .removePrefix("https://").removePrefix("http://")
-            .removePrefix("www.github.com/").removePrefix("github.com/")
-            .removeSuffix(".git").trim('/')
-        val p = t.split("/")
-        return if (p.size >= 2) "${p[0]}/${p[1]}" else t
-    }
-
-    private fun explain(code: Int, text: String): String = when (code) {
-        401 -> "توکن اشتباهه یا منقضی شده (401)"
-        403 -> "توکن اجازه این کار رو نداره (403)"
-        404 -> "ریپو پیدا نشد یا توکن به این ریپو دسترسی نداره (404). اسم ریپو رو چک کن و توی توکن همین ریپو رو انتخاب کن"
-        else -> err(code, text)
-    }
-
-    fun check(repo: String, token: String): String {
-        if (!repo.contains("/")) return "آدرس ریپو درست نیست. مثل owner/name بنویس"
-        val (rc, rt) = Net.api("GET", "/repos/$repo", token)
-        if (rc != 200) return explain(rc, rt)
-        val canPush = try {
-            JSONObject(rt).getJSONObject("permissions").optBoolean("push")
-        } catch (_: Throwable) {
-            true
-        }
-        if (!canPush) return "توکن فقط خوندن داره. باید Contents و Actions رو روی Read and write بذاری"
-        if (hasWorkflow(repo, token, WORKFLOW)) return "وصله ✓ ورک‌فلو dl.yml (همه سایت‌ها)"
-        if (hasWorkflow(repo, token, LEGACY)) return "وصله ✓ ورک‌فلو YT-downloader (یوتیوب، اینستاگرام، تیک‌تاک)"
-        return "اتصال درسته ولی نه dl.yml توی این ریپو هست نه YT-downloader.yml"
-    }
-
-    private fun hasWorkflow(repo: String, token: String, file: String): Boolean =
-        Net.api("GET", "/repos/$repo/actions/workflows/$file", token).first == 200
-
-    private fun enc(path: String) =
-        path.split("/").joinToString("/") { URLEncoder.encode(it, "UTF-8").replace("+", "%20") }
-
-    private fun listVideos(repo: String, token: String, ref: String): Map<String, JSONObject> {
-        val (code, text) = Net.api("GET", "/repos/$repo/contents/videos?ref=${URLEncoder.encode(ref, "UTF-8")}", token)
-        if (code == 404) return emptyMap()
-        if (code != 200) throw RuntimeException(explain(code, text))
-        val arr = JSONArray(text)
-        val out = LinkedHashMap<String, JSONObject>()
-        for (i in 0 until arr.length()) {
-            val o = arr.getJSONObject(i)
-            if (o.optString("type") == "file") out[o.getString("name")] = o
-        }
-        return out
-    }
-
-    private fun legacyRuns(repo: String, token: String): List<JSONObject> {
-        val (code, text) = Net.api("GET", "/repos/$repo/actions/workflows/$LEGACY/runs?event=workflow_dispatch&per_page=10", token)
-        if (code != 200) throw RuntimeException(explain(code, text))
-        val arr = JSONObject(text).getJSONArray("workflow_runs")
-        return (0 until arr.length()).map { arr.getJSONObject(it) }
-    }
-
-    private suspend fun legacy(
-        repo: String,
-        token: String,
-        branch: String,
-        quality: String,
-        url: String,
-        dir: File,
-        status: suspend (String) -> Unit,
-        progress: (Float) -> Unit
-    ): List<File> {
-        val low = url.lowercase()
-        if (low.contains("spotify") || low.contains("pinterest") || low.contains("pin.it")) {
-            throw RuntimeException("ورک‌فلوی YT-downloader فقط یوتیوب، اینستاگرام و تیک‌تاک رو پشتیبانی می‌کنه. برای اسپاتیفای و پینترست باید dl.yml توی ریپو باشه")
-        }
-        val before = listVideos(repo, token, branch)
-        val known = legacyRuns(repo, token).map { it.getLong("id") }.toSet()
-
-        status("ارسال درخواست به گیت‌هاب...")
-        val body = JSONObject()
-            .put("ref", branch)
-            .put(
-                "inputs",
-                JSONObject()
-                    .put("youtube_url", url)
-                    .put("quality", quality)
-                    .put("split_threshold_mb", "0")
-                    .put("save_in_new_branch", "false")
-            ).toString()
-        val (dc, dt) = Net.api("POST", "/repos/$repo/actions/workflows/$LEGACY/dispatches", token, body)
-        if (dc != 204) throw RuntimeException("اجرای ورک‌فلو ناموفق: ${err(dc, dt)}")
-
-        val started = System.currentTimeMillis()
-        while (true) {
-            delay(4000)
-            val sec = (System.currentTimeMillis() - started) / 1000
-            if (sec > 30 * 60) throw RuntimeException("زمان انتظار تموم شد")
-            val run = legacyRuns(repo, token).firstOrNull { it.getLong("id") !in known }
-            if (run == null) {
-                status("منتظر شروع ورک‌فلو... ${sec}s")
-                continue
-            }
-            if (run.optString("status") == "completed") {
-                val concl = run.optString("conclusion")
-                if (concl != "success") throw RuntimeException("دانلود روی گیت‌هاب شکست خورد ($concl) ${run.optString("html_url")}")
-                break
-            }
-            status("در حال دانلود روی گیت‌هاب... ${sec}s")
-        }
-
-        status("گرفتن فایل از ریپو...")
-        val after = listVideos(repo, token, branch)
-        val fresh = after.filter { (name, o) -> before[name]?.optString("sha") != o.optString("sha") }
-        if (fresh.isEmpty()) throw RuntimeException("فایل جدیدی توی ریپو پیدا نشد")
-        dir.mkdirs()
-        val result = mutableListOf<File>()
-        for ((name, o) in fresh) {
-            status("دانلود $name")
-            val path = o.getString("path")
-            val out = File(dir, safeName(name))
-            Net.download(
-                "https://api.github.com/repos/$repo/contents/${enc(path)}?ref=${URLEncoder.encode(branch, "UTF-8")}",
-                out, token, "application/vnd.github.raw", progress
-            )
-            result += out
-            try {
-                val del = JSONObject()
-                    .put("message", "remove downloaded file [skip ci]")
-                    .put("sha", o.getString("sha"))
-                    .put("branch", branch)
-                    .toString()
-                Net.api("DELETE", "/repos/$repo/contents/${enc(path)}", token, del)
-            } catch (_: Throwable) {
-            }
-        }
-        return result
-    }
+    fun newJob(): String = java.lang.Long.toString(System.currentTimeMillis(), 36) + (100..999).random()
 
     private fun err(code: Int, text: String): String {
         val m = try {
@@ -153,84 +32,225 @@ object GhActions {
         return "GitHub $code ${m.take(120)}"
     }
 
+    private fun explain(code: Int, text: String): String = when (code) {
+        401 -> "توکن اشتباهه یا منقضی شده (401)"
+        403 -> "توکن اجازه این کار رو نداره (403)"
+        404 -> "ریپو پیدا نشد یا توکن به این ریپو دسترسی نداره (404). توی توکن ریپوی BuildApp رو انتخاب کن"
+        else -> err(code, text)
+    }
+
     private fun safeName(s: String) = s.replace(Regex("""[\\/:*?"<>|\r\n]"""), "_").trim().take(120).ifEmpty { "file" }
 
+    fun check(token: String): String {
+        val (rc, rt) = Net.api("GET", "/repos/$REPO", token)
+        if (rc != 200) return explain(rc, rt)
+        val canPush = try {
+            JSONObject(rt).getJSONObject("permissions").optBoolean("push")
+        } catch (_: Throwable) {
+            true
+        }
+        if (!canPush) return "توکن فقط خوندن داره. باید Contents و Actions رو روی Read and write بذاری"
+        val (wc, _) = Net.api("GET", "/repos/$REPO/actions/workflows/$WORKFLOW", token)
+        if (wc != 200) return "اتصال درسته ولی ورک‌فلو dl.yml پیدا نشد"
+        return "وصله ✓ همه‌چیز آماده‌ست"
+    }
+
+    private fun findRun(token: String, job: String): JSONObject? {
+        val (c, t) = Net.api("GET", "/repos/$REPO/actions/workflows/$WORKFLOW/runs?event=workflow_dispatch&per_page=30", token)
+        if (c != 200) throw RuntimeException(explain(c, t))
+        val arr = JSONObject(t).getJSONArray("workflow_runs")
+        var found: JSONObject? = null
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            if (o.optString("display_title") == "dl $job") found = o
+        }
+        return found
+    }
+
+    private fun releaseOf(token: String, job: String): JSONObject? {
+        val (c, t) = Net.api("GET", "/repos/$REPO/releases/tags/dl-$job", token)
+        return if (c == 200) JSONObject(t) else null
+    }
+
+    private fun deleteRelease(token: String, job: String) {
+        val rel = releaseOf(token, job)
+        if (rel != null) Net.api("DELETE", "/repos/$REPO/releases/${rel.getLong("id")}", token)
+        Net.api("DELETE", "/repos/$REPO/git/refs/tags/dl-$job", token)
+    }
+
+    fun cancelRemote(token: String, job: String) {
+        try {
+            val r = findRun(token, job)
+            if (r != null && r.optString("status") != "completed") {
+                Net.api("POST", "/repos/$REPO/actions/runs/${r.getLong("id")}/cancel", token)
+            }
+        } catch (_: Throwable) {
+        }
+        try {
+            deleteRelease(token, job)
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun fromBody(b: JSONObject, fallback: Update): Update {
+        val title = b.optString("title")
+        val thumb = b.optString("thumb")
+        return when (b.optString("phase")) {
+            "download" -> {
+                val count = b.optInt("count", 1)
+                val idx = b.optInt("index", 1)
+                Update(
+                    label = if (count > 1) "دانلود روی گیت‌هاب ($idx از $count)" else "دانلود روی گیت‌هاب",
+                    percent = b.optDouble("percent", -1.0).toFloat(),
+                    done = b.optLong("downloaded"),
+                    total = b.optLong("total"),
+                    speed = b.optLong("speed"),
+                    eta = b.optLong("eta", -1),
+                    title = title,
+                    thumb = thumb
+                )
+            }
+            "uploading", "done" -> Update("آپلود نتیجه روی گیت‌هاب", -1f, title = title, thumb = thumb)
+            else -> fallback.copy(title = title, thumb = thumb)
+        }
+    }
+
+    private class Meter {
+        private var t0 = System.nanoTime()
+        private var b0 = 0L
+        private var speed = 0.0
+
+        fun update(bytes: Long): Long {
+            val t = System.nanoTime()
+            val dt = (t - t0) / 1e9
+            if (dt >= 0.7) {
+                val inst = (bytes - b0) / dt
+                speed = if (speed == 0.0) inst else speed * 0.6 + inst * 0.4
+                t0 = t
+                b0 = bytes
+            }
+            return speed.toLong()
+        }
+    }
+
+    private fun failure(token: String, job: String, run: JSONObject): RuntimeException {
+        var msg = ""
+        try {
+            val rel = releaseOf(token, job)
+            if (rel != null) msg = JSONObject(rel.optString("body")).optString("message")
+        } catch (_: Throwable) {
+        }
+        val concl = run.optString("conclusion")
+        try {
+            deleteRelease(token, job)
+        } catch (_: Throwable) {
+        }
+        return RuntimeException(
+            when {
+                concl == "cancelled" -> "اجرای گیت‌هاب لغو شد"
+                msg.isNotBlank() -> msg
+                else -> "دانلود روی گیت‌هاب شکست خورد ($concl)"
+            }
+        )
+    }
+
     suspend fun download(
-        repo: String,
         token: String,
         quality: String,
         url: String,
+        job: String,
         dir: File,
-        status: suspend (String) -> Unit,
-        progress: (Float) -> Unit
+        onUpdate: (Update) -> Unit
     ): List<File> {
-        val (rc, rt) = Net.api("GET", "/repos/$repo", token)
+        val (rc, rt) = Net.api("GET", "/repos/$REPO", token)
         if (rc != 200) throw RuntimeException(explain(rc, rt))
         val branch = JSONObject(rt).getString("default_branch")
-        if (!hasWorkflow(repo, token, WORKFLOW)) {
-            if (hasWorkflow(repo, token, LEGACY)) return legacy(repo, token, branch, quality, url, dir, status, progress)
-            throw RuntimeException("توی این ریپو نه dl.yml هست نه YT-downloader.yml")
-        }
-        val job = java.lang.Long.toString(System.currentTimeMillis(), 36) + (100..999).random()
 
-        status("ارسال درخواست به گیت‌هاب...")
-        val body = JSONObject()
-            .put("ref", branch)
-            .put(
-                "inputs",
-                JSONObject()
-                    .put("url", url)
-                    .put("quality", quality)
-                    .put("audio", if (quality == "audio") "true" else "false")
-                    .put("job", job)
-            ).toString()
-        val (dc, dt) = Net.api("POST", "/repos/$repo/actions/workflows/$WORKFLOW/dispatches", token, body)
-        if (dc != 204) throw RuntimeException("اجرای ورک‌فلو ناموفق: ${err(dc, dt)}")
+        onUpdate(Update("بررسی درخواست..."))
+        if (findRun(token, job) == null) {
+            onUpdate(Update("ارسال درخواست به گیت‌هاب"))
+            val body = JSONObject()
+                .put("ref", branch)
+                .put(
+                    "inputs",
+                    JSONObject()
+                        .put("url", url)
+                        .put("quality", quality)
+                        .put("audio", if (quality == "audio") "true" else "false")
+                        .put("job", job)
+                ).toString()
+            val (dc, dt) = Net.api("POST", "/repos/$REPO/actions/workflows/$WORKFLOW/dispatches", token, body)
+            if (dc != 204) throw RuntimeException("اجرای ورک‌فلو ناموفق: ${explain(dc, dt)}")
+        }
 
         val started = System.currentTimeMillis()
+        var fails = 0
+        var title = ""
+        var thumb = ""
         while (true) {
-            delay(4000)
-            val sec = (System.currentTimeMillis() - started) / 1000
-            if (sec > 30 * 60) throw RuntimeException("زمان انتظار تموم شد")
-            val (c, t) = Net.api("GET", "/repos/$repo/actions/workflows/$WORKFLOW/runs?event=workflow_dispatch&per_page=20", token)
-            if (c != 200) throw RuntimeException(err(c, t))
-            val arr = JSONObject(t).getJSONArray("workflow_runs")
-            var run: JSONObject? = null
-            for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
-                if (o.optString("display_title") == "dl $job") {
-                    run = o
-                    break
+            delay(3000)
+            if (System.currentTimeMillis() - started > 40 * 60 * 1000L) throw RuntimeException("زمان انتظار تموم شد")
+            try {
+                val run = findRun(token, job)
+                var upd = Update("در صف گیت‌هاب...")
+                if (run != null) {
+                    val st = run.optString("status")
+                    if (st == "completed") {
+                        if (run.optString("conclusion") != "success") throw failure(token, job, run)
+                        break
+                    }
+                    upd = Update(if (st == "in_progress") "آماده‌سازی ران‌ر گیت‌هاب" else "در صف گیت‌هاب...")
+                    val rel = releaseOf(token, job)
+                    if (rel != null) {
+                        try {
+                            upd = fromBody(JSONObject(rel.optString("body")), upd)
+                        } catch (_: Throwable) {
+                        }
+                    }
                 }
+                if (upd.title.isNotBlank()) title = upd.title
+                if (upd.thumb.isNotBlank()) thumb = upd.thumb
+                onUpdate(upd)
+                fails = 0
+            } catch (e: IOException) {
+                fails++
+                if (fails > 10) throw RuntimeException("اینترنت قطعه")
+                onUpdate(Update("اتصال اینترنت قطع شد، دوباره تلاش می‌کنم...", title = title, thumb = thumb))
             }
-            if (run == null) {
-                status("منتظر شروع ورک‌فلو... ${sec}s")
-                continue
-            }
-            if (run.optString("status") == "completed") {
-                val concl = run.optString("conclusion")
-                if (concl != "success") throw RuntimeException("دانلود روی گیت‌هاب شکست خورد ($concl) ${run.optString("html_url")}")
-                break
-            }
-            status("در حال دانلود روی گیت‌هاب... ${sec}s")
         }
 
-        status("گرفتن فایل‌ها...")
-        val (c1, t1) = Net.api("GET", "/repos/$repo/releases/tags/dl-$job", token)
-        if (c1 != 200) throw RuntimeException("خروجی ورک‌فلو پیدا نشد: ${err(c1, t1)}")
-        val rel = JSONObject(t1)
-        val relId = rel.getLong("id")
+        onUpdate(Update("آماده‌سازی دریافت...", title = title, thumb = thumb))
+        val rel = releaseOf(token, job) ?: throw RuntimeException("خروجی ورک‌فلو پیدا نشد")
         val assets = rel.getJSONArray("assets")
+        if (assets.length() == 0) throw RuntimeException("خروجی ورک‌فلو خالی بود")
+        var total = 0L
+        for (i in 0 until assets.length()) total += assets.getJSONObject(i).getLong("size")
         dir.mkdirs()
 
+        val meter = Meter()
+        var base = 0L
         val raw = LinkedHashMap<String, File>()
         var meta: JSONArray? = null
         for (i in 0 until assets.length()) {
             val a = assets.getJSONObject(i)
             val name = a.getString("name")
-            status("دانلود $name")
+            val size = a.getLong("size")
             val f = File(dir, name)
-            Net.download(a.getString("url"), f, token, "application/octet-stream", progress)
+            val base0 = base
+            Net.download(a.getString("url"), f, token, "application/octet-stream") { read, _ ->
+                val cum = base0 + read
+                val sp = meter.update(cum)
+                val eta = if (sp > 0) (total - cum) / sp else -1L
+                onUpdate(
+                    Update(
+                        "دریافت روی گوشی (${i + 1} از ${assets.length()})",
+                        if (total > 0) cum.toFloat() / total else -1f,
+                        cum, total, sp, eta, title, thumb
+                    )
+                )
+            }
+            if (f.length() != size) throw RuntimeException("حجم فایل دریافتی با فایل اصلی نمی‌خونه")
+            base += size
             if (name == "meta.json") {
                 meta = try {
                     JSONArray(f.readText())
@@ -262,13 +282,12 @@ object GhActions {
             if (dest.absolutePath != f.absolutePath) f.renameTo(dest)
             result += if (dest.exists()) dest else f
         }
+        if (result.isEmpty()) throw RuntimeException("فایلی دریافت نشد")
 
         try {
-            Net.api("DELETE", "/repos/$repo/releases/$relId", token)
-            Net.api("DELETE", "/repos/$repo/git/refs/tags/dl-$job", token)
+            deleteRelease(token, job)
         } catch (_: Throwable) {
         }
-        if (result.isEmpty()) throw RuntimeException("فایلی دریافت نشد")
         return result
     }
 }

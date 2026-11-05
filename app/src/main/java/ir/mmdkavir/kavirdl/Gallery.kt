@@ -2,11 +2,13 @@ package ir.mmdkavir.kavirdl
 
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.media.MediaScannerConnection
 import android.os.Build
 import android.os.Environment
 import android.net.Uri
 import android.provider.MediaStore
+import androidx.core.content.FileProvider
 import androidx.documentfile.provider.DocumentFile
 import java.io.File
 
@@ -78,5 +80,26 @@ object Gallery {
             file.copyTo(dest, overwrite = true)
             MediaScannerConnection.scanFile(ctx, arrayOf(dest.absolutePath), arrayOf(mime), null)
         }
+    }
+}
+
+object Opener {
+    private fun uri(ctx: Context, f: File): Uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", f)
+
+    fun view(ctx: Context, f: File, mime: String) {
+        val i = Intent(Intent.ACTION_VIEW)
+        i.setDataAndType(uri(ctx, f), mime)
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        ctx.startActivity(i)
+    }
+
+    fun share(ctx: Context, f: File, mime: String) {
+        val i = Intent(Intent.ACTION_SEND)
+        i.type = mime
+        i.putExtra(Intent.EXTRA_STREAM, uri(ctx, f))
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        val chooser = Intent.createChooser(i, "اشتراک‌گذاری")
+        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ctx.startActivity(chooser)
     }
 }

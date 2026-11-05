@@ -1,6 +1,9 @@
 package ir.mmdkavir.kavirdl
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import java.io.File
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -18,7 +21,7 @@ object Net {
         return c
     }
 
-    fun api(method: String, path: String, token: String?, body: String? = null): Pair<Int, String> {
+    private fun apiOnce(method: String, path: String, token: String?, body: String?): Pair<Int, String> {
         val c = open("https://api.github.com$path", "application/vnd.github+json")
         try {
             c.instanceFollowRedirects = true
@@ -39,7 +42,21 @@ object Net {
         }
     }
 
-    fun download(url: String, out: File, token: String?, accept: String, onProgress: (Float) -> Unit) {
+    fun api(method: String, path: String, token: String?, body: String? = null): Pair<Int, String> {
+        val attempts = if (method == "GET") 3 else 1
+        var last: IOException? = null
+        for (i in 1..attempts) {
+            try {
+                return apiOnce(method, path, token, body)
+            } catch (e: IOException) {
+                last = e
+                if (i < attempts) Thread.sleep(1500L * i)
+            }
+        }
+        throw last ?: IOException("network")
+    }
+
+    private fun downloadOnce(url: String, out: File, token: String?, accept: String, onProgress: (Long, Long) -> Unit) {
         var cur = url
         val firstHost = URL(url).host
         for (i in 0 until 6) {
@@ -50,7 +67,7 @@ object Net {
                 }
                 val code = c.responseCode
                 if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
-                    val loc = c.getHeaderField("Location") ?: throw RuntimeException("redirect بدون آدرس")
+                    val loc = c.getHeaderField("Location") ?: throw IOException("redirect بدون آدرس")
                     cur = URL(URL(cur), loc).toString()
                     continue
                 }
@@ -65,7 +82,7 @@ object Net {
                             if (n < 0) break
                             output.write(buf, 0, n)
                             read += n
-                            if (total > 0) onProgress(read.toFloat() / total)
+                            onProgress(read, total)
                         }
                     }
                 }
@@ -74,6 +91,34 @@ object Net {
                 c.disconnect()
             }
         }
-        throw RuntimeException("تعداد redirect زیاد شد")
+        throw IOException("تعداد redirect زیاد شد")
+    }
+
+    fun download(url: String, out: File, token: String?, accept: String, onProgress: (Long, Long) -> Unit) {
+        var last: IOException? = null
+        for (i in 1..3) {
+            try {
+                downloadOnce(url, out, token, accept, onProgress)
+                return
+            } catch (e: IOException) {
+                last = e
+                if (i < 3) Thread.sleep(2000L * i)
+            }
+        }
+        throw last ?: IOException("network")
+    }
+
+    fun bitmap(url: String): Bitmap? = try {
+        val c = open(url, "image/*")
+        try {
+            c.instanceFollowRedirects = true
+            c.connectTimeout = 10000
+            c.readTimeout = 10000
+            if (c.responseCode in 200..299) BitmapFactory.decodeStream(c.inputStream) else null
+        } finally {
+            c.disconnect()
+        }
+    } catch (_: Throwable) {
+        null
     }
 }
