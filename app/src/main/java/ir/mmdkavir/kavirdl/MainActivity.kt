@@ -43,6 +43,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.PlayArrow
@@ -92,6 +93,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -121,7 +123,19 @@ class MainActivity : ComponentActivity() {
                 dark -> darkColorScheme()
                 else -> lightColorScheme()
             }
-            MaterialTheme(colorScheme = scheme) {
+            MaterialTheme(
+                colorScheme = scheme,
+                shapes = androidx.compose.material3.Shapes(
+                    small = RoundedCornerShape(12.dp), medium = RoundedCornerShape(16.dp), large = RoundedCornerShape(24.dp)
+                ),
+                typography = androidx.compose.material3.Typography().let {
+                    it.copy(
+                        titleLarge = it.titleLarge.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold),
+                        titleMedium = it.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
+                        titleSmall = it.titleSmall.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                    )
+                }
+            ) {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                     Root(vm)
                 }
@@ -216,7 +230,11 @@ fun Home(vm: MainVM) {
                 }
             }
             Spacer(Modifier.height(8.dp))
-            Button(onClick = { vm.start() }, modifier = Modifier.fillMaxWidth()) { Text("دانلود") }
+            Button(onClick = { vm.start() }, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) {
+                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.size(8.dp))
+                Text("دانلود", style = MaterialTheme.typography.titleSmall)
+            }
             if (vm.status.isNotBlank()) {
                 Text(
                     vm.status,
@@ -227,11 +245,21 @@ fun Home(vm: MainVM) {
                 )
             }
             if (vm.tasks.isEmpty()) {
-                Text(
-                    "لینک یوتیوب، اینستاگرام، تیک‌تاک، اسپاتیفای یا پینترست رو بذار. دانلود روی ریپوی گیت‌هاب خودت انجام می‌شه؛ اول توی تنظیمات وصلش کن و «ساخت پیکربندی» رو بزن.",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(vertical = 12.dp)
-                )
+                Column(
+                    Modifier.fillMaxWidth().weight(1f).padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(56.dp), tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(12.dp))
+                    Text("هنوز دانلودی نداری", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "لینک یوتیوب، اینستاگرام، تیک‌تاک، اسپاتیفای یا پینترست رو بذار. دانلود روی ریپوی گیت‌هاب خودت انجام می‌شه؛ اول توی تنظیمات وصلش کن و «ساخت پیکربندی» رو بزن.",
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
             }
         }
         if (vm.tasks.isNotEmpty()) {
@@ -276,8 +304,12 @@ fun TextOnly(text: String, onClick: () -> Unit) {
 @Composable
 fun TaskCard(t: Task, vm: MainVM, modifier: Modifier) {
     val ctx = LocalContext.current
-    Card(modifier.fillMaxWidth()) {
-        Column(Modifier.padding(10.dp)) {
+    Card(
+        modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
+    ) {
+        Column(Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Thumb(t)
                 Spacer(Modifier.size(10.dp))
@@ -314,11 +346,11 @@ fun TaskCard(t: Task, vm: MainVM, modifier: Modifier) {
                     Spacer(Modifier.height(6.dp))
                     val known = t.state == St.RUNNING && t.percent in 0f..1f
                     val anim by animateFloatAsState(if (known) t.percent else 0f, label = "p")
-                    if (known) LinearProgressIndicator(progress = { anim }, modifier = Modifier.fillMaxWidth())
-                    else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    if (known) LinearProgressIndicator(progress = { anim }, modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)))
+                    else LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)))
                     Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(t.label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(if (known) "${(t.percent * 100).toInt()}٪" else "—", style = MaterialTheme.typography.labelMedium)
+                        Text(if (known) "${(t.percent * 100).toInt()}٪" else "—", style = MaterialTheme.typography.titleSmall)
                     }
                     if (t.state == St.RUNNING && (t.total > 0 || t.speed > 0)) {
                         val sz = if (t.total > 0) "${fmtSize(ctx, t.done)} از ${fmtSize(ctx, t.total)}" else fmtSize(ctx, t.done)
@@ -573,6 +605,8 @@ fun SettingsScreen(vm: MainVM, onGuide: () -> Unit, onIntro: () -> Unit) {
             Text("${(vm.updProgress * 100).toInt()}٪", style = MaterialTheme.typography.labelMedium)
         }
         if (vm.updMsg.isNotBlank()) Text(vm.updMsg, style = MaterialTheme.typography.bodyMedium)
+        HorizontalDivider()
+        PlayerSettings()
         HorizontalDivider()
         Text("محل ذخیره", style = MaterialTheme.typography.titleMedium)
         Row(verticalAlignment = Alignment.CenterVertically) {
