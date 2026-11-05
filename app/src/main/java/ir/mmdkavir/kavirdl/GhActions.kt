@@ -18,8 +18,7 @@ data class Update(
 )
 
 object GhActions {
-    const val REPO = "kavirkobra69/BuildApp"
-    private const val WORKFLOW = "dl.yml"
+    const val WORKFLOW = "dl.yml"
 
     fun newJob(): String = java.lang.Long.toString(System.currentTimeMillis(), 36) + (100..999).random()
 
@@ -34,15 +33,15 @@ object GhActions {
 
     private fun explain(code: Int, text: String): String = when (code) {
         401 -> "توکن اشتباهه یا منقضی شده (401)"
-        403 -> "توکن اجازه این کار رو نداره (403)"
-        404 -> "ریپو پیدا نشد یا توکن به این ریپو دسترسی نداره (404). توی توکن ریپوی BuildApp رو انتخاب کن"
+        403 -> "توکن اجازه این کار رو نداره (403). دسترسی‌های Contents، Actions و Workflows رو Read and write بذار"
+        404 -> "ریپو پیدا نشد یا توکن به این ریپو دسترسی نداره (404)"
         else -> err(code, text)
     }
 
     private fun safeName(s: String) = s.replace(Regex("""[\\/:*?"<>|\r\n]"""), "_").trim().take(120).ifEmpty { "file" }
 
-    fun check(token: String): String {
-        val (rc, rt) = Net.api("GET", "/repos/$REPO", token)
+    fun check(repo: String, token: String): String {
+        val (rc, rt) = Net.api("GET", "/repos/$repo", token)
         if (rc != 200) return explain(rc, rt)
         val canPush = try {
             JSONObject(rt).getJSONObject("permissions").optBoolean("push")
@@ -50,13 +49,13 @@ object GhActions {
             true
         }
         if (!canPush) return "توکن فقط خوندن داره. باید Contents و Actions رو روی Read and write بذاری"
-        val (wc, _) = Net.api("GET", "/repos/$REPO/actions/workflows/$WORKFLOW", token)
-        if (wc != 200) return "اتصال درسته ولی ورک‌فلو dl.yml پیدا نشد"
+        val (wc, _) = Net.api("GET", "/repos/$repo/actions/workflows/$WORKFLOW", token)
+        if (wc != 200) return "ورک‌فلو dl.yml توی ریپوی تو نصب نیست. «ساخت پیکربندی» رو بزن"
         return "وصله ✓ همه‌چیز آماده‌ست"
     }
 
-    private fun findRun(token: String, job: String): JSONObject? {
-        val (c, t) = Net.api("GET", "/repos/$REPO/actions/workflows/$WORKFLOW/runs?event=workflow_dispatch&per_page=30", token)
+    private fun findRun(repo: String, token: String, job: String): JSONObject? {
+        val (c, t) = Net.api("GET", "/repos/$repo/actions/workflows/$WORKFLOW/runs?event=workflow_dispatch&per_page=30", token)
         if (c != 200) throw RuntimeException(explain(c, t))
         val arr = JSONObject(t).getJSONArray("workflow_runs")
         var found: JSONObject? = null
@@ -67,27 +66,27 @@ object GhActions {
         return found
     }
 
-    private fun releaseOf(token: String, job: String): JSONObject? {
-        val (c, t) = Net.api("GET", "/repos/$REPO/releases/tags/dl-$job", token)
+    private fun releaseOf(repo: String, token: String, job: String): JSONObject? {
+        val (c, t) = Net.api("GET", "/repos/$repo/releases/tags/dl-$job", token)
         return if (c == 200) JSONObject(t) else null
     }
 
-    private fun deleteRelease(token: String, job: String) {
-        val rel = releaseOf(token, job)
-        if (rel != null) Net.api("DELETE", "/repos/$REPO/releases/${rel.getLong("id")}", token)
-        Net.api("DELETE", "/repos/$REPO/git/refs/tags/dl-$job", token)
+    private fun deleteRelease(repo: String, token: String, job: String) {
+        val rel = releaseOf(repo, token, job)
+        if (rel != null) Net.api("DELETE", "/repos/$repo/releases/${rel.getLong("id")}", token)
+        Net.api("DELETE", "/repos/$repo/git/refs/tags/dl-$job", token)
     }
 
-    fun cancelRemote(token: String, job: String) {
+    fun cancelRemote(repo: String, token: String, job: String) {
         try {
-            val r = findRun(token, job)
+            val r = findRun(repo, token, job)
             if (r != null && r.optString("status") != "completed") {
-                Net.api("POST", "/repos/$REPO/actions/runs/${r.getLong("id")}/cancel", token)
+                Net.api("POST", "/repos/$repo/actions/runs/${r.getLong("id")}/cancel", token)
             }
         } catch (_: Throwable) {
         }
         try {
-            deleteRelease(token, job)
+            deleteRelease(repo, token, job)
         } catch (_: Throwable) {
         }
     }
@@ -133,16 +132,16 @@ object GhActions {
         }
     }
 
-    private fun failure(token: String, job: String, run: JSONObject): RuntimeException {
+    private fun failure(repo: String, token: String, job: String, run: JSONObject): RuntimeException {
         var msg = ""
         try {
-            val rel = releaseOf(token, job)
+            val rel = releaseOf(repo, token, job)
             if (rel != null) msg = JSONObject(rel.optString("body")).optString("message")
         } catch (_: Throwable) {
         }
         val concl = run.optString("conclusion")
         try {
-            deleteRelease(token, job)
+            deleteRelease(repo, token, job)
         } catch (_: Throwable) {
         }
         return RuntimeException(
@@ -155,6 +154,7 @@ object GhActions {
     }
 
     suspend fun download(
+        repo: String,
         token: String,
         quality: String,
         url: String,
@@ -162,12 +162,12 @@ object GhActions {
         dir: File,
         onUpdate: (Update) -> Unit
     ): List<File> {
-        val (rc, rt) = Net.api("GET", "/repos/$REPO", token)
+        val (rc, rt) = Net.api("GET", "/repos/$repo", token)
         if (rc != 200) throw RuntimeException(explain(rc, rt))
         val branch = JSONObject(rt).getString("default_branch")
 
         onUpdate(Update("بررسی درخواست..."))
-        if (findRun(token, job) == null) {
+        if (findRun(repo, token, job) == null) {
             onUpdate(Update("ارسال درخواست به گیت‌هاب"))
             val body = JSONObject()
                 .put("ref", branch)
@@ -179,7 +179,7 @@ object GhActions {
                         .put("audio", if (quality == "audio") "true" else "false")
                         .put("job", job)
                 ).toString()
-            val (dc, dt) = Net.api("POST", "/repos/$REPO/actions/workflows/$WORKFLOW/dispatches", token, body)
+            val (dc, dt) = Net.api("POST", "/repos/$repo/actions/workflows/$WORKFLOW/dispatches", token, body)
             if (dc != 204) throw RuntimeException("اجرای ورک‌فلو ناموفق: ${explain(dc, dt)}")
         }
 
@@ -191,16 +191,16 @@ object GhActions {
             delay(3000)
             if (System.currentTimeMillis() - started > 40 * 60 * 1000L) throw RuntimeException("زمان انتظار تموم شد")
             try {
-                val run = findRun(token, job)
+                val run = findRun(repo, token, job)
                 var upd = Update("در صف گیت‌هاب...")
                 if (run != null) {
                     val st = run.optString("status")
                     if (st == "completed") {
-                        if (run.optString("conclusion") != "success") throw failure(token, job, run)
+                        if (run.optString("conclusion") != "success") throw failure(repo, token, job, run)
                         break
                     }
                     upd = Update(if (st == "in_progress") "آماده‌سازی ران‌ر گیت‌هاب" else "در صف گیت‌هاب...")
-                    val rel = releaseOf(token, job)
+                    val rel = releaseOf(repo, token, job)
                     if (rel != null) {
                         try {
                             upd = fromBody(JSONObject(rel.optString("body")), upd)
@@ -220,7 +220,7 @@ object GhActions {
         }
 
         onUpdate(Update("آماده‌سازی دریافت...", title = title, thumb = thumb))
-        val rel = releaseOf(token, job) ?: throw RuntimeException("خروجی ورک‌فلو پیدا نشد")
+        val rel = releaseOf(repo, token, job) ?: throw RuntimeException("خروجی ورک‌فلو پیدا نشد")
         val assets = rel.getJSONArray("assets")
         if (assets.length() == 0) throw RuntimeException("خروجی ورک‌فلو خالی بود")
         var total = 0L
@@ -285,7 +285,7 @@ object GhActions {
         if (result.isEmpty()) throw RuntimeException("فایلی دریافت نشد")
 
         try {
-            deleteRelease(token, job)
+            deleteRelease(repo, token, job)
         } catch (_: Throwable) {
         }
         return result

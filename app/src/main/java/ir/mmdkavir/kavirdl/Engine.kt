@@ -26,6 +26,7 @@ object Prefs {
     private fun sp(c: Context) = c.getSharedPreferences("kdl", Context.MODE_PRIVATE)
     fun str(c: Context, k: String, d: String = ""): String = sp(c).getString(k, d) ?: d
     fun setStr(c: Context, k: String, v: String) = sp(c).edit().putString(k, v).apply()
+    fun remove(c: Context, k: String) = sp(c).edit().remove(k).apply()
 }
 
 enum class St { QUEUED, RUNNING, DONE, FAILED }
@@ -40,7 +41,8 @@ class Task(
     thumb: String = "",
     error: String = "",
     saved: String = "",
-    val files: List<File> = emptyList()
+    val files: List<File> = emptyList(),
+    val repo: String = ""
 ) {
     var state by mutableStateOf(state)
     var title by mutableStateOf(title)
@@ -79,6 +81,11 @@ object Store {
                 val names = o.optJSONArray("files") ?: JSONArray()
                 val files = (0 until names.length()).map { File(File(root(ctx), id), names.getString(it)) }
                 var err = o.optString("error")
+                val repo = o.optString("repo")
+                if ((st == St.QUEUED || st == St.RUNNING) && repo.isBlank()) {
+                    st = St.FAILED
+                    err = "این دانلود قبل از اتصال حساب شخصی بود؛ دوباره دانلودش کن"
+                }
                 if (st == St.DONE && (files.isEmpty() || files.any { !it.exists() })) {
                     st = St.FAILED
                     err = "فایل دانلودشده پیدا نشد"
@@ -86,7 +93,7 @@ object Store {
                 out += Task(
                     id, o.getString("src"), o.optString("quality", "720"), o.optLong("time"),
                     st, o.optString("title"), o.optString("thumb"), err, o.optString("saved"),
-                    if (st == St.DONE) files else emptyList()
+                    if (st == St.DONE) files else emptyList(), repo
                 )
             }
             out
@@ -103,7 +110,7 @@ object Store {
                 JSONObject()
                     .put("id", t.id).put("src", t.src).put("quality", t.quality).put("time", t.time)
                     .put("state", t.state.name).put("title", t.title).put("thumb", t.thumb)
-                    .put("error", t.error).put("saved", t.saved)
+                    .put("error", t.error).put("saved", t.saved).put("repo", t.repo)
                     .put("files", JSONArray(t.doneFiles.map { it.name }))
             )
         }
@@ -120,9 +127,18 @@ class MainVM(app: Application) : AndroidViewModel(app) {
     var url by mutableStateOf("")
     var quality by mutableStateOf(Prefs.str(app, "quality", "720"))
     var status by mutableStateOf("")
-    var ghToken by mutableStateOf(Prefs.str(app, "ghToken"))
+    var ghToken by mutableStateOf("")
+    var repoInput by mutableStateOf(Prefs.str(app, "connRepo"))
+    var makePrivate by mutableStateOf(true)
+    var createNew by mutableStateOf(true)
+    var connLogin by mutableStateOf(Prefs.str(app, "connLogin"))
+    var connRepo by mutableStateOf(Prefs.str(app, "connRepo"))
+    var connInfo by mutableStateOf("")
     var dlMsg by mutableStateOf("")
     var updMsg by mutableStateOf("")
+    var setupProgress by mutableStateOf(-1f)
+    var pending by mutableStateOf<Pair<RepoInfo, List<SetupFile>>?>(null)
+    var pendingConflicts by mutableStateOf<List<SetupFile>>(emptyList())
     var saveMode by mutableStateOf(Prefs.str(app, "saveMode", "gallery"))
     var treeUri by mutableStateOf(Prefs.str(app, "treeUri"))
     var settingsBusy by mutableStateOf(false)
@@ -131,7 +147,19 @@ class MainVM(app: Application) : AndroidViewModel(app) {
     private val jobs = HashMap<String, Job>()
     private val gate = Semaphore(3)
 
+    private fun stored(): String = Secure.get(ctx, "ghToken")
+
+    private fun clean(m: String): String {
+        var r = m
+        for (t in listOf(stored(), ghToken.trim())) if (t.length > 8) r = r.replace(t, "***")
+        return r
+    }
+
     init {
+        Prefs.remove(app, "ghToken")
+        Prefs.remove(app, "ghRepo")
+        Prefs.remove(app, "updToken")
+        Prefs.remove(app, "updRepo")
         tasks.addAll(Store.load(app))
         tasks.filter { it.state == St.QUEUED || it.state == St.RUNNING }.forEach {
             it.state = St.QUEUED
@@ -152,7 +180,7 @@ class MainVM(app: Application) : AndroidViewModel(app) {
 
     private fun nice(e: Throwable): String {
         val m = e.message ?: e.toString()
-        return m.lineSequence().firstOrNull { it.isNotBlank() }?.take(220) ?: m
+        return clean(m.lineSequence().firstOrNull { it.isNotBlank() }?.take(220) ?: m)
     }
 
     fun start() {
@@ -161,15 +189,15 @@ class MainVM(app: Application) : AndroidViewModel(app) {
             status = "لینک معتبر پیدا نشد"
             return
         }
-        if (ghToken.isBlank()) {
-            status = "اول توی تنظیمات، توکن گیت‌هاب رو وارد کن"
+        if (connRepo.isBlank() || stored().isBlank()) {
+            status = "اول توی تنظیمات، حساب گیت‌هاب خودت رو وصل کن"
             return
         }
         if (tasks.any { it.src == link && it.quality == quality && (it.state == St.QUEUED || it.state == St.RUNNING) }) {
             status = "این لینک همین الان در حال دانلوده"
             return
         }
-        val t = Task(GhActions.newJob(), link, quality, System.currentTimeMillis())
+        val t = Task(GhActions.newJob(), link, quality, System.currentTimeMillis(), repo = connRepo)
         tasks.add(0, t)
         url = ""
         status = ""
@@ -185,7 +213,7 @@ class MainVM(app: Application) : AndroidViewModel(app) {
                 gate.withPermit {
                     withContext(Dispatchers.Main) { t.state = St.RUNNING; t.error = "" }
                     var lastWrite = 0L
-                    val files = GhActions.download(ghToken.trim(), t.quality, t.src, t.id, tmp) { u ->
+                    val files = GhActions.download(t.repo, stored(), t.quality, t.src, t.id, tmp) { u ->
                         viewModelScope.launch(Dispatchers.Main) {
                             t.label = u.label
                             t.percent = u.percent
@@ -239,15 +267,16 @@ class MainVM(app: Application) : AndroidViewModel(app) {
         t.state = St.FAILED
         t.error = "لغو شد"
         persist()
-        val token = ghToken.trim()
-        viewModelScope.launch(NonCancellable + Dispatchers.IO) { GhActions.cancelRemote(token, t.id) }
+        val token = stored()
+        val repo = t.repo
+        viewModelScope.launch(NonCancellable + Dispatchers.IO) { if (repo.isNotBlank()) GhActions.cancelRemote(repo, token, t.id) }
     }
 
     fun retry(t: Task) {
         if (t.state != St.FAILED) return
         val i = tasks.indexOf(t)
         if (i < 0) return
-        val n = Task(GhActions.newJob(), t.src, t.quality, System.currentTimeMillis(), title = t.title, thumb = t.thumb)
+        val n = Task(GhActions.newJob(), t.src, t.quality, System.currentTimeMillis(), title = t.title, thumb = t.thumb, repo = connRepo)
         tasks[i] = n
         persist()
         launchTask(n)
@@ -293,27 +322,145 @@ class MainVM(app: Application) : AndroidViewModel(app) {
         tasks.filter { it.state == St.DONE }.toList().forEach { delete(it) }
     }
 
-    fun saveGh() {
-        Prefs.setStr(ctx, "ghToken", ghToken.trim())
-        dlMsg = "ذخیره شد"
-    }
-
-    fun testGh() {
+    private fun run(block: () -> String) {
         if (settingsBusy) return
-        saveGh()
         settingsBusy = true
-        dlMsg = "در حال تست..."
+        setupProgress = -1f
         viewModelScope.launch(Dispatchers.IO) {
             val msg = try {
-                GhActions.check(ghToken.trim())
+                block()
             } catch (e: Throwable) {
                 "ناموفق: ${nice(e)}"
             }
             withContext(Dispatchers.Main) {
                 dlMsg = msg
                 settingsBusy = false
+                setupProgress = -1f
             }
         }
+    }
+
+    private fun cancelActive() {
+        tasks.filter { it.state == St.QUEUED || it.state == St.RUNNING }.toList().forEach { cancel(it) }
+    }
+
+    private fun main(f: () -> Unit) {
+        viewModelScope.launch(Dispatchers.Main) { f() }
+    }
+
+    private fun tokenToUse(): String = ghToken.trim().ifEmpty { stored() }.also {
+        if (it.isBlank()) throw RuntimeException("توکن رو وارد کن")
+    }
+
+    private fun adopt(token: String, me: String, r: RepoInfo) {
+        val changed = connRepo != r.full || stored() != token
+        if (changed) cancelActive()
+        Secure.put(ctx, "ghToken", token)
+        Prefs.setStr(ctx, "connLogin", me)
+        Prefs.setStr(ctx, "connRepo", r.full)
+        main {
+            connLogin = me
+            connRepo = r.full
+            repoInput = r.full
+            ghToken = ""
+        }
+    }
+
+    private fun describe(token: String, me: String, r: RepoInfo): String {
+        val wf = GitHubSetup.workflowInstalled(token, r.full)
+        val runs = if (wf) GitHubSetup.recentRuns(token, r.full) else emptyList()
+        val s = "حساب: $me\nریپو: ${r.full} (${if (r.priv) "خصوصی" else "عمومی"})\nورک‌فلو: ${if (wf) "نصب شده ✓" else "نصب نیست؛ «ساخت پیکربندی» رو بزن"}"
+        return if (runs.isEmpty()) s else s + "\nآخرین اجراها:\n" + runs.joinToString("\n")
+    }
+
+    fun connect() = run {
+        dlMsg = "در حال بررسی..."
+        val token = tokenToUse()
+        val (me, r) = GitHubSetup.validate(token, repoInput)
+        adopt(token, me, r)
+        "وصل شد ✓\n" + describe(token, me, r)
+    }
+
+    fun refreshStatus() = run {
+        val token = stored()
+        if (token.isBlank() || connRepo.isBlank()) throw RuntimeException("هنوز وصل نشدی")
+        val (me, r) = GitHubSetup.validate(token, connRepo)
+        describe(token, me, r)
+    }
+
+    fun disconnect() {
+        if (settingsBusy) return
+        cancelActive()
+        Secure.remove(ctx, "ghToken")
+        Prefs.remove(ctx, "connLogin")
+        Prefs.remove(ctx, "connRepo")
+        ghToken = ""
+        repoInput = ""
+        connLogin = ""
+        connRepo = ""
+        pending = null
+        dlMsg = "قطع شد و توکن از گوشی پاک شد"
+    }
+
+    private fun finishUpload(token: String, r: RepoInfo, files: List<SetupFile>, confirmed: Set<String>): String {
+        val res = GitHubSetup.upload(token, r, files, confirmed) { i, n, name ->
+            main { setupProgress = if (n == 0) -1f else i.toFloat() / n; if (name.isNotBlank()) dlMsg = "آپلود (${i + 1} از $n): $name" }
+        }
+        if (res.conflicts.isNotEmpty()) {
+            main {
+                pending = r to files
+                pendingConflicts = res.conflicts
+            }
+            return "این فایل‌ها از قبل هستن و فرق دارن؛ منتظر تأیید جایگزینی"
+        }
+        GitHubSetup.ensureActionsEnabled(token, r.full)
+        val ok = GitHubSetup.workflowInstalled(token, r.full, 8)
+        val summary = "آپلود شد: ${res.uploaded.size}، بدون تغییر: ${res.same.size}"
+        return if (ok) "$summary\nورک‌فلو dl.yml نصب و فعاله ✓" else "$summary\nفایل‌ها آپلود شدن ولی ورک‌فلو هنوز فعال نشد؛ چند ثانیه بعد «تازه‌سازی وضعیت» رو بزن"
+    }
+
+    fun createConfig() = run {
+        dlMsg = "در حال بررسی..."
+        val token = tokenToUse()
+        val me = GitHubSetup.login(token)
+        val (o, n) = GitHubSetup.parseRepo(repoInput, me) ?: throw RuntimeException("آدرس یا اسم ریپو معتبر نیست")
+        if (!o.equals(me, ignoreCase = true)) throw RuntimeException("این ریپو مال حساب $me نیست")
+        var r = GitHubSetup.repo(token, o, n)
+        var created = false
+        if (r == null) {
+            if (!createNew) throw RuntimeException("ریپو پیدا نشد و ساخت ریپوی جدید خاموشه")
+            r = GitHubSetup.create(token, n, makePrivate)
+            created = true
+        }
+        if (!r.owner.equals(me, ignoreCase = true)) throw RuntimeException("این ریپو مال حساب $me نیست")
+        if (!r.canPush) throw RuntimeException("توکن اجازه نوشتن توی این ریپو رو نداره")
+        adopt(token, me, r)
+        val out = finishUpload(token, r, GitHubSetup.bundled(ctx), emptySet())
+        (if (created) "ریپوی جدید ساخته شد: ${r.full}\n" else "") + out
+    }
+
+    fun uploadPicked(uris: List<Uri>) = run {
+        val token = stored()
+        if (token.isBlank() || connRepo.isBlank()) throw RuntimeException("اول حساب گیت‌هاب رو وصل کن")
+        val (_, r) = GitHubSetup.validate(token, connRepo)
+        val files = uris.map { u ->
+            val name = androidx.documentfile.provider.DocumentFile.fromSingleUri(ctx, u)?.name ?: ""
+            val bytes = ctx.contentResolver.openInputStream(u)?.use { it.readBytes() } ?: throw RuntimeException("$name: خوندن فایل ممکن نشد")
+            GitHubSetup.validateUserFile(name, bytes)
+        }
+        finishUpload(token, r, files, emptySet())
+    }
+
+    fun confirmOverwrite() {
+        val p = pending ?: return
+        val allow = pendingConflicts.map { it.dst }.toSet()
+        pending = null
+        run { finishUpload(stored(), p.first, p.second, allow) }
+    }
+
+    fun declineOverwrite() {
+        pending = null
+        dlMsg = "جایگزینی لغو شد؛ فایل‌های موجود دست نخورد"
     }
 
     fun pickSaveMode(mode: String) {
@@ -337,11 +484,10 @@ class MainVM(app: Application) : AndroidViewModel(app) {
     fun checkUpdate() {
         if (settingsBusy) return
         settingsBusy = true
-        saveGh()
         updMsg = "در حال بررسی..."
         viewModelScope.launch(Dispatchers.IO) {
             val msg = try {
-                val token = ghToken.trim().ifEmpty { null }
+                val token: String? = null
                 val info = Updater.latest(Updater.APP_REPO, token)
                 val cur = Updater.currentVersion(ctx)
                 if (!Updater.isNewer(info.tag, cur)) {

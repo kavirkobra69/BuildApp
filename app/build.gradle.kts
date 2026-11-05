@@ -52,6 +52,12 @@ android {
         jvmTarget = "17"
     }
 
+    sourceSets {
+        getByName("main") {
+            assets.srcDir("../.github")
+        }
+    }
+
     buildFeatures {
         compose = true
     }

@@ -215,7 +215,7 @@ fun Home(vm: MainVM) {
             }
             if (vm.tasks.isEmpty()) {
                 Text(
-                    "لینک یوتیوب، اینستاگرام، تیک‌تاک، اسپاتیفای یا پینترست رو بذار. چند دانلود همزمان هم ممکنه. دانلود روی گیت‌هاب انجام می‌شه؛ فقط توکن رو توی تنظیمات وارد کن.",
+                    "لینک یوتیوب، اینستاگرام، تیک‌تاک، اسپاتیفای یا پینترست رو بذار. دانلود روی ریپوی گیت‌هاب خودت انجام می‌شه؛ اول توی تنظیمات وصلش کن و «ساخت پیکربندی» رو بزن.",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(vertical = 12.dp)
                 )
@@ -452,6 +452,18 @@ fun SettingsScreen(vm: MainVM) {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) vm.setTree(uri)
     }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) vm.uploadPicked(uris)
+    }
+    if (vm.pending != null) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { vm.declineOverwrite() },
+            title = { Text("جایگزینی فایل‌های موجود؟") },
+            text = { Text("این فایل‌ها توی ریپوی تو هستن و فرق دارن:\n" + vm.pendingConflicts.joinToString("\n") { it.dst }) },
+            confirmButton = { TextOnly("جایگزین کن") { vm.confirmOverwrite() } },
+            dismissButton = { TextOnly("نه، دست نزن") { vm.declineOverwrite() } }
+        )
+    }
     val folderName = remember(vm.treeUri) {
         if (vm.treeUri.isBlank()) "" else (DocumentFile.fromTreeUri(ctx, Uri.parse(vm.treeUri))?.name ?: "")
     }
@@ -459,27 +471,65 @@ fun SettingsScreen(vm: MainVM) {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("توکن گیت‌هاب", style = MaterialTheme.typography.titleMedium)
+        Text("اتصال به گیت‌هاب شخصی", style = MaterialTheme.typography.titleMedium)
         Text(
-            "فقط یه توکن (Fine-grained) برای ریپوی BuildApp با دسترسی Contents و Actions روی Read and write. دانلود و آپدیت هر دو با همین کار می‌کنه.",
+            "هر کاربر باید حساب و ریپوی خودش رو وصل کنه و همه دانلودها فقط توی همون ریپو اجرا می‌شن. " +
+                "توکن Fine-grained فقط برای همون ریپو با دسترسی Contents، Actions و Workflows روی Read and write. " +
+                "برای ساخت ریپوی جدید توکن Classic با scope های repo و workflow لازمه. توکن رمزگذاری‌شده با Android Keystore نگه‌داری می‌شه.",
             style = MaterialTheme.typography.bodySmall
         )
+        if (vm.connRepo.isNotBlank()) {
+            Text("وصل به: ${vm.connLogin} / ${vm.connRepo}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+        } else {
+            Text("وصل نیست", style = MaterialTheme.typography.bodyMedium)
+        }
         OutlinedTextField(
             value = vm.ghToken,
             onValueChange = { vm.ghToken = it },
-            label = { Text("توکن گیت‌هاب") },
+            label = { Text(if (vm.connRepo.isNotBlank()) "توکن جدید (اختیاری، فعلی ذخیره‌ست)" else "توکن گیت‌هاب (PAT)") },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth()
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { vm.saveGh() }) { Text("ذخیره") }
-            OutlinedButton(onClick = { vm.testGh() }, enabled = !vm.settingsBusy) { Text("تست اتصال") }
+        OutlinedTextField(
+            value = vm.repoInput,
+            onValueChange = { vm.repoInput = it },
+            label = { Text("لینک یا اسم ریپو (مثلا github.com/نام‌کاربری/ریپو)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.material3.Switch(checked = vm.createNew, onCheckedChange = { vm.createNew = it })
+            Spacer(Modifier.size(8.dp))
+            Text("اگه ریپو نبود، ریپوی جدید بساز")
+        }
+        if (vm.createNew) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.Switch(checked = vm.makePrivate, onCheckedChange = { vm.makePrivate = it })
+                Spacer(Modifier.size(8.dp))
+                Text("ریپوی جدید خصوصی باشه")
+            }
+        }
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { vm.connect() }, enabled = !vm.settingsBusy) { Text("اتصال") }
+            Button(onClick = { vm.createConfig() }, enabled = !vm.settingsBusy) { Text("ساخت پیکربندی") }
+            OutlinedButton(onClick = { vm.refreshStatus() }, enabled = !vm.settingsBusy && vm.connRepo.isNotBlank()) { Text("تازه‌سازی وضعیت") }
+        }
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = { filePicker.launch(arrayOf("*/*")) },
+                enabled = !vm.settingsBusy && vm.connRepo.isNotBlank()
+            ) { Text("آپلود فایل راه‌اندازی Actions") }
+            OutlinedButton(onClick = { vm.disconnect() }, enabled = !vm.settingsBusy && vm.connRepo.isNotBlank()) { Text("قطع اتصال و حذف توکن") }
+        }
+        if (vm.settingsBusy) {
+            if (vm.setupProgress in 0f..1f) LinearProgressIndicator(progress = { vm.setupProgress }, modifier = Modifier.fillMaxWidth())
+            else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
         if (vm.dlMsg.isNotBlank()) Text(vm.dlMsg, style = MaterialTheme.typography.bodyMedium)
         HorizontalDivider()
         Text("آپدیت برنامه", style = MaterialTheme.typography.titleMedium)
-        Text("نسخه فعلی: ${vm.versionName}", style = MaterialTheme.typography.bodyMedium)
+        Text("نسخه فعلی: ${vm.versionName} (آپدیت از ریپوی رسمی برنامه، بدون ارسال توکن تو)", style = MaterialTheme.typography.bodyMedium)
         Button(onClick = { vm.checkUpdate() }, enabled = !vm.settingsBusy) { Text("بررسی آپدیت") }
         if (vm.updMsg.isNotBlank()) Text(vm.updMsg, style = MaterialTheme.typography.bodyMedium)
         HorizontalDivider()
