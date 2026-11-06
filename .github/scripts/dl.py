@@ -327,13 +327,7 @@ def pinterest(url):
     if not chosen:
         if kind == "gif":
             sys.exit("برای این پین GIF اصلی قابل دسترسی نیست")
-        for c in cands:
-            if "/originals/" not in c and _pin_probe(c):
-                chosen = c
-                break
-        if not chosen:
-            sys.exit("نسخه اصلی عکس قابل دسترسی نیست")
-        print("WARNING: original not accessible, using best available", flush=True)
+        sys.exit("نسخه اصلی عکس قابل دسترسی نیست؛ برای جلوگیری از دریافت نسخه کم‌کیفیت دانلود انجام نشد")
     tmp = OUT / "pin_image.tmp"
     save_file(chosen, tmp)
     ext = _magic_ext(tmp)
