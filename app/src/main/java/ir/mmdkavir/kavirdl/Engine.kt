@@ -130,8 +130,8 @@ class MainVM(app: Application) : AndroidViewModel(app) {
     var ghToken by mutableStateOf("")
     var repoInput by mutableStateOf(Prefs.str(app, "connRepo"))
     var makePrivate by mutableStateOf(true)
-    var username by mutableStateOf(Prefs.str(app, "username"))
-    var branch by mutableStateOf(Prefs.str(app, "branch"))
+    var username by mutableStateOf("")
+    var branch by mutableStateOf("")
     var updLatest by mutableStateOf("")
     var updNotes by mutableStateOf("")
     var updAvailable by mutableStateOf(false)
@@ -164,6 +164,8 @@ class MainVM(app: Application) : AndroidViewModel(app) {
 
     init {
         Prefs.remove(app, "ghToken")
+        Prefs.remove(app, "username")
+        Prefs.remove(app, "branch")
         Prefs.remove(app, "ghRepo")
         Prefs.remove(app, "updToken")
         Prefs.remove(app, "updRepo")
@@ -190,7 +192,7 @@ class MainVM(app: Application) : AndroidViewModel(app) {
         return clean(m.lineSequence().firstOrNull { it.isNotBlank() }?.take(220) ?: m)
     }
 
-    fun start() {
+    fun start(kind: String? = null) {
         val link = Regex("""https?://[^\s]+""").find(url)?.value?.trimEnd('.', ',', ')', '،')
         if (link == null) {
             status = "لینک معتبر پیدا نشد"
@@ -200,11 +202,12 @@ class MainVM(app: Application) : AndroidViewModel(app) {
             status = "اول توی تنظیمات، حساب گیت‌هاب خودت رو وصل کن"
             return
         }
-        if (tasks.any { it.src == link && it.quality == quality && (it.state == St.QUEUED || it.state == St.RUNNING) }) {
+        val q = kind ?: quality
+        if (tasks.any { it.src == link && it.quality == q && (it.state == St.QUEUED || it.state == St.RUNNING) }) {
             status = "این لینک همین الان در حال دانلوده"
             return
         }
-        val t = Task(GhActions.newJob(), link, quality, System.currentTimeMillis(), repo = connRepo)
+        val t = Task(GhActions.newJob(), link, q, System.currentTimeMillis(), repo = connRepo)
         tasks.add(0, t)
         url = ""
         status = ""

@@ -247,33 +247,103 @@ def spotify(url):
         ytdlp(f"ytsearch1:{q} audio", name=safe(q), audio=True, search=True, track_index=i, track_count=n)
 
 
+def _pin_probe(u):
+    try:
+        req = urllib.request.Request(u, headers={"User-Agent": UA, "Range": "bytes=0-15"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            head = r.read(16)
+            return r.status in (200, 206) and (r.headers.get("Content-Type", "").startswith("image/") or head[:3] == b"GIF")
+    except Exception:
+        return False
+
+
+def _magic_ext(path):
+    h = open(path, "rb").read(16)
+    if h[:3] == b"GIF":
+        return "gif"
+    if h[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if h[:3] == b"\xff\xd8\xff":
+        return "jpg"
+    if h[:4] == b"RIFF" and h[8:12] == b"WEBP":
+        return "webp"
+    return ""
+
+
 def pinterest(url):
+    kind = QUALITY if QUALITY in ("image", "gif") else "auto"
     html, _ = fetch(url)
-    markers = ['"video_list"', '"V_720P"', "og:video", '"V_HLSV3', '"V_EXP']
-    if any(k in html for k in markers):
+    html = html.replace("\\/", "/")
+    is_video = any(k in html for k in ['"video_list"', '"V_720P"', "og:video", '"V_HLSV3', '"V_EXP'])
+    if kind == "auto" and is_video or (kind == "image" and "og:video" in html):
+        if kind == "image":
+            sys.exit("این پین ویدیوئه نه عکس. دکمه دانلود معمولی رو بزن")
         if ytdlp(url):
             return
-        mp4 = re.search(r'https:\\?/\\?/v\d*\.pinimg\.com[^"\\]*?\.mp4', html)
+        mp4 = re.search(r"https://v\d*\.pinimg\.com[^\"\\]*?\.mp4", html)
         if mp4:
-            save_file(mp4.group(0).replace("\\/", "/"), OUT / "pin_video.mp4")
+            save_file(mp4.group(0), OUT / "pin_video.mp4")
             return
         sys.exit("ویدیوی پینترست پیدا نشد")
+
+    found = []
+    for m in re.finditer(r'"orig"\s*:\s*\{([^{}]*)\}', html):
+        body = m.group(1)
+        u = re.search(r'"url"\s*:\s*"([^"]+)"', body)
+        w = re.search(r'"width"\s*:\s*(\d+)', body)
+        h = re.search(r'"height"\s*:\s*(\d+)', body)
+        if u:
+            found.append((int(w.group(1)) * int(h.group(1)) if w and h else 1, u.group(1)))
+    found.sort(key=lambda x: -x[0])
+    cands = [u for _, u in found]
+    for m in re.finditer(r'https://i\.pinimg\.com/(?:\d+x|originals)/[A-Za-z0-9/_\-]+\.(?:jpg|jpeg|png|gif|webp)', html):
+        cands.append(m.group(0))
     og = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)', html) or re.search(
         r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', html
     )
-    if not og:
-        sys.exit("عکس پینترست پیدا نشد")
-    u = og.group(1).replace("&amp;", "&")
-    ext = u.rsplit(".", 1)[-1].split("?")[0].lower()
-    if ext not in ("gif", "png", "webp", "jpg", "jpeg"):
-        ext = "jpg"
-    target = OUT / f"pin_image.{ext}"
-    report(force=True, title="Pinterest", thumb=u, percent=-1)
-    up = re.sub(r"pinimg\.com/\d+x/", "pinimg.com/originals/", u)
-    try:
-        save_file(up, target)
-    except Exception:
-        save_file(u, target)
+    if og:
+        cands.insert(0, og.group(1).replace("&amp;", "&"))
+    if not cands:
+        sys.exit("آدرس عکس این پین پیدا نشد")
+
+    report(force=True, title="Pinterest", thumb=cands[0], percent=-1)
+    tried, chosen = set(), None
+    exts = ["gif", "jpg", "png", "webp", "jpeg"] if kind == "gif" else ["jpg", "png", "webp", "gif", "jpeg"]
+    for c in cands:
+        base = re.sub(r"pinimg\.com/\d+x/", "pinimg.com/originals/", c).rsplit(".", 1)[0]
+        own = c.rsplit(".", 1)[-1].split("?")[0].lower()
+        for e in ([own] if own in exts else []) + exts:
+            u = f"{base}.{e}"
+            if u in tried:
+                continue
+            tried.add(u)
+            if kind == "gif" and e != "gif":
+                continue
+            if _pin_probe(u):
+                chosen = u
+                break
+        if chosen:
+            break
+    if not chosen:
+        if kind == "gif":
+            sys.exit("برای این پین GIF اصلی قابل دسترسی نیست")
+        for c in cands:
+            if "/originals/" not in c and _pin_probe(c):
+                chosen = c
+                break
+        if not chosen:
+            sys.exit("نسخه اصلی عکس قابل دسترسی نیست")
+        print("WARNING: original not accessible, using best available", flush=True)
+    tmp = OUT / "pin_image.tmp"
+    save_file(chosen, tmp)
+    ext = _magic_ext(tmp)
+    if not ext:
+        tmp.unlink()
+        sys.exit("فایل دریافتی عکس معتبر نبود")
+    if kind == "gif" and ext != "gif":
+        tmp.unlink()
+        sys.exit("برای این پین GIF اصلی قابل دسترسی نیست")
+    tmp.rename(OUT / f"pin_image.{ext}")
 
 
 def main():

@@ -157,6 +157,7 @@ fun Root(vm: MainVM) {
     Scaffold(
         topBar = {
             TopAppBar(
+                colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
                 title = { Text(when (screen) { 0 -> "KavirDL 🚀"; 1 -> "تنظیمات"; else -> "راهنما و نصب" }) },
                 navigationIcon = {
                     if (screen != 0) {
@@ -242,6 +243,19 @@ fun Home(vm: MainVM) {
                 Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.size(8.dp))
                 Text("دانلود", style = MaterialTheme.typography.titleSmall)
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { vm.start("image") }, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(14.dp)) {
+                    Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.size(6.dp))
+                    Text("دانلود عکس")
+                }
+                OutlinedButton(onClick = { vm.start("gif") }, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(14.dp)) {
+                    Icon(Icons.Default.Movie, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.size(6.dp))
+                    Text("دانلود GIF")
+                }
             }
             if (vm.status.isNotBlank()) {
                 Text(
@@ -513,6 +527,8 @@ fun SettingsScreen(vm: MainVM, onGuide: () -> Unit, onIntro: () -> Unit) {
     if (vm.pending != null) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { vm.declineOverwrite() },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
             title = { Text("جایگزینی فایل‌های موجود؟") },
             text = { Text("این فایل‌ها توی ریپوی تو هستن و فرق دارن:\n" + vm.pendingConflicts.joinToString("\n") { it.dst }) },
             confirmButton = { TextOnly("جایگزین کن") { vm.confirmOverwrite() } },
@@ -552,23 +568,9 @@ fun SettingsScreen(vm: MainVM, onGuide: () -> Unit, onIntro: () -> Unit) {
             modifier = Modifier.fillMaxWidth()
         )
         OutlinedTextField(
-            value = vm.username,
-            onValueChange = { vm.username = it },
-            label = { Text("نام کاربری گیت‌هاب (اختیاری)") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-        OutlinedTextField(
             value = vm.repoInput,
             onValueChange = { vm.repoInput = it },
             label = { Text("لینک یا اسم ریپو (مثلا github.com/نام‌کاربری/ریپو)") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-        OutlinedTextField(
-            value = vm.branch,
-            onValueChange = { vm.branch = it },
-            label = { Text("نام شاخه (اختیاری، خالی = شاخه پیش‌فرض)") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
@@ -621,9 +623,6 @@ fun SettingsScreen(vm: MainVM, onGuide: () -> Unit, onIntro: () -> Unit) {
             Text("${(vm.updProgress * 100).toInt()}٪", style = MaterialTheme.typography.labelMedium)
         }
         if (vm.updMsg.isNotBlank()) Text(vm.updMsg, style = MaterialTheme.typography.bodyMedium, color = Color.White)
-        }
-        SCard {
-        PlayerSettings()
         }
         SCard {
         Text("محل ذخیره", style = MaterialTheme.typography.titleMedium)

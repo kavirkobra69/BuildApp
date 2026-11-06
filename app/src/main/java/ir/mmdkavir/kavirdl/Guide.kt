@@ -50,7 +50,11 @@ import kotlinx.coroutines.launch
 fun Onboarding(onDone: () -> Unit, onSettings: () -> Unit, onGuide: () -> Unit) {
     val pager = rememberPagerState(pageCount = { 3 })
     val scope = rememberCoroutineScope()
-    Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    androidx.compose.runtime.CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides androidx.compose.ui.graphics.Color.White) {
+    Column(
+        Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color(0xFF101014)).padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
         HorizontalPager(pager, Modifier.weight(1f).fillMaxWidth()) { page ->
             Column(
                 Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
@@ -62,7 +66,7 @@ fun Onboarding(onDone: () -> Unit, onSettings: () -> Unit, onGuide: () -> Unit) 
                         Image(painterResource(R.drawable.ic_launcher), contentDescription = null, modifier = Modifier.size(110.dp))
                         Spacer(Modifier.height(16.dp))
                         Text("خوش آمدی", style = MaterialTheme.typography.headlineMedium)
-                        Text("KavirDL", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+                        Text("KavirDL", style = MaterialTheme.typography.titleLarge, color = androidx.compose.ui.graphics.Color.White)
                         Spacer(Modifier.height(12.dp))
                         Text(
                             "دانلودر ساده برای ویدیو، آهنگ و عکس. لینک رو بذار، بقیه‌اش با ما.",
@@ -112,6 +116,7 @@ fun Onboarding(onDone: () -> Unit, onSettings: () -> Unit, onGuide: () -> Unit) 
                 )
             }
         }
+    }
     }
 }
 
@@ -171,7 +176,7 @@ fun GuideScreen() {
             Link("مدیریت توکن‌ها", "https://github.com/settings/personal-access-tokens")
         }
         Section("د) وصل کردن ریپو توی برنامه") {
-            Text("۱) تنظیمات رو باز کن.\n۲) نام کاربری گیت‌هاب (اختیاری؛ اگه خالی باشه از روی توکن شناخته می‌شه).\n۳) لینک یا اسم ریپو رو بنویس (مثلا نام‌کاربری/ریپو).\n۴) توکن رو بچسبون.\n۵) اگه ریپوت شاخه غیر پیش‌فرض داره، اسمش رو توی «نام شاخه» بنویس؛ وگرنه خالی بذار.\n۶) «ذخیره و تست اتصال» رو بزن. اگه همه‌چیز درست باشه حساب و ریپو نشون داده می‌شه.\n۷) «ساخت پیکربندی» رو بزن تا ورک‌فلوها خودکار نصب بشن، بعد اگه لازم شد «تازه‌سازی وضعیت».")
+            Text("۱) تنظیمات رو باز کن.\n۲) توکن رو بچسبون.\n۳) لینک یا اسم ریپو رو بنویس (مثلا نام‌کاربری/ریپو). نام کاربری و شاخه پیش‌فرض خودکار از روی توکن و ریپو پیدا می‌شن.\n۴) «ذخیره و تست اتصال» رو بزن. اگه همه‌چیز درست باشه حساب و ریپو نشون داده می‌شه.\n۵) «ساخت پیکربندی» رو بزن تا ورک‌فلوها خودکار نصب بشن، بعد اگه لازم شد «تازه‌سازی وضعیت».")
             Link("مستندات رسمی توکن‌ها", "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens")
             Link("مستندات رسمی GitHub Actions", "https://docs.github.com/en/actions")
         }
@@ -181,7 +186,7 @@ fun GuideScreen() {
             Text("دسترسی ناکافی (403): دسترسی‌های Contents، Actions و Workflows رو روی Read and write بذار و مطمئن شو ریپوی درست انتخاب شده.")
             Text("ریپو پیدا نشد (404): اسم یا نام کاربری رو چک کن، و اینکه توکن به همون ریپو دسترسی داره. برای ریپوی خصوصی توکن باید حتماً اون ریپو رو انتخاب کرده باشه.")
             Link("ریپوهای تو", "https://github.com/?tab=repositories")
-            Text("شاخه اشتباه: اسم شاخه باید دقیقاً مثل ریپو باشه (حساس به حروف). خالی بذار تا شاخه پیش‌فرض استفاده بشه.")
+            Text("شاخه اشتباه: برنامه خودش شاخه پیش‌فرض ریپو رو استفاده می‌کنه. اگه ریپو خالیه یا شاخه اصلیش رو عوض کردی، «ساخت پیکربندی» رو دوباره بزن.")
             Text("محدودیت درخواست (rate limit، پیام 403 یا 429): چند دقیقه صبر کن و دوباره تلاش کن. حد مجاز برای توکن هر ساعت محدوده.")
             Link("اطلاعات rate limit", "https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api")
             Text("خطای شبکه: اینترنت رو چک کن. برنامه خودش چند بار دوباره تلاش می‌کنه. اگه github.com برات باز نمی‌شه، اول دسترسیت رو درست کن.")

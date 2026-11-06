@@ -140,6 +140,10 @@ class PlayerActivity : ComponentActivity() {
         requestedOrientation = baseOrientation
         landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         applyBars()
+        if (Gallery.kindOf(Gallery.mimeOf(file)) == Kind.IMAGE) {
+            setContent { MaterialTheme(colorScheme = darkColorScheme()) { ImageScreen(file, title) { finish() } } }
+            return
+        }
         val p = ExoPlayer.Builder(this).build()
         player = p
         if (file.exists()) {
@@ -555,7 +559,7 @@ private fun VideoScreen(p: ExoPlayer, file: File, title: String, isFull: Boolean
                 modifier = Modifier.align(Alignment.Center).padding(24.dp).background(bar, RoundedCornerShape(16.dp)).padding(16.dp)
             )
         }
-        AnimatedVisibility(visible || error.isNotEmpty(), Modifier.align(Alignment.TopCenter), enter = fadeIn(), exit = fadeOut()) {
+        AnimatedVisibility(visible || error.isNotEmpty(), Modifier.align(Alignment.TopCenter), enter = fadeIn() + androidx.compose.animation.slideInVertically { -it / 2 }, exit = fadeOut() + androidx.compose.animation.slideOutVertically { -it / 2 }) {
             Row(
                 Modifier.fillMaxWidth().background(bar).padding(horizontal = 8.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -577,10 +581,12 @@ private fun VideoScreen(p: ExoPlayer, file: File, title: String, isFull: Boolean
                 }
             }
         }
-        AnimatedVisibility(visible || error.isNotEmpty(), Modifier.align(Alignment.BottomCenter), enter = fadeIn(), exit = fadeOut()) {
-            Column(Modifier.fillMaxWidth().background(bar).padding(horizontal = 12.dp, vertical = 6.dp)) {
+        AnimatedVisibility(visible || error.isNotEmpty(), Modifier.align(Alignment.BottomCenter), enter = fadeIn() + androidx.compose.animation.slideInVertically { it / 2 }, exit = fadeOut() + androidx.compose.animation.slideOutVertically { it / 2 }) {
+            Column(
+                Modifier.fillMaxWidth().background(bar, RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)).padding(horizontal = 14.dp, vertical = 8.dp)
+            ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(fmt(if (dragging) (dragPos * dur).toLong() else pos), color = Color.White, style = MaterialTheme.typography.labelMedium)
+                    Text(fmt(if (dragging) (dragPos * dur).toLong() else pos), color = Color.White, style = MaterialTheme.typography.labelLarge)
                     Slider(
                         value = if (dragging) dragPos else if (dur > 0) (pos.toFloat() / dur).coerceIn(0f, 1f) else 0f,
                         onValueChange = { dragging = true; dragPos = it },
@@ -591,6 +597,7 @@ private fun VideoScreen(p: ExoPlayer, file: File, title: String, isFull: Boolean
                             }
                             dragging = false
                         },
+                        colors = androidx.compose.material3.SliderDefaults.colors(thumbColor = MaterialTheme.colorScheme.primary, activeTrackColor = MaterialTheme.colorScheme.primary, inactiveTrackColor = Color.White.copy(alpha = 0.25f)),
                         enabled = dur > 0 && error.isEmpty(),
                         modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
                     )
@@ -616,7 +623,7 @@ private fun VideoScreen(p: ExoPlayer, file: File, title: String, isFull: Boolean
                     IconButton(onClick = { p.seekTo((p.currentPosition - 10_000).coerceAtLeast(0)); touch++ }, enabled = error.isEmpty()) {
                         Icon(Icons.Default.Replay10, contentDescription = "Back 10 seconds", tint = Color.White, modifier = Modifier.size(32.dp))
                     }
-                    IconButton(
+                    androidx.compose.material3.FilledIconButton(
                         onClick = {
                             if (p.playbackState == Player.STATE_ENDED) p.seekTo(0)
                             if (p.isPlaying) p.pause() else p.play()
@@ -626,7 +633,7 @@ private fun VideoScreen(p: ExoPlayer, file: File, title: String, isFull: Boolean
                     ) {
                         Icon(
                             if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = if (playing) "Pause" else "Play", tint = Color.White, modifier = Modifier.size(44.dp)
+                            contentDescription = if (playing) "Pause" else "Play", modifier = Modifier.size(36.dp)
                         )
                     }
                     IconButton(
@@ -643,29 +650,52 @@ private fun VideoScreen(p: ExoPlayer, file: File, title: String, isFull: Boolean
 }
 
 @Composable
-fun PlayerSettings() {
-    val ctx = LocalContext.current
-    var hide by remember { mutableStateOf(Prefs.str(ctx, "pl_hide", "4")) }
-    var orient by remember { mutableStateOf(Prefs.str(ctx, "pl_orient", "auto")) }
-    var remember by remember { mutableStateOf(Prefs.str(ctx, "pl_remember", "1")) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("تنظیمات پخش‌کننده", style = MaterialTheme.typography.titleMedium)
-        Text("مخفی شدن خودکار کنترل‌ها (ثانیه)", style = MaterialTheme.typography.labelLarge)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("2", "4", "6", "8").forEach {
-                FilterChip(selected = hide == it, onClick = { hide = it; Prefs.setStr(ctx, "pl_hide", it) }, label = { Text(it) })
+private fun ImageScreen(file: File, title: String, onExit: () -> Unit) {
+    BackHandler { onExit() }
+    Column(Modifier.fillMaxSize().background(Color(0xFF0E0E12)).padding(16.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                title.ifBlank { file.nameWithoutExtension }, color = Color.White, maxLines = 1,
+                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f)
+            )
+            Button(onClick = onExit) {
+                Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.size(6.dp))
+                Text("Exit Player")
             }
         }
-        Text("جهت صفحه هنگام پخش", style = MaterialTheme.typography.labelLarge)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("auto" to "خودکار", "portrait" to "عمودی", "landscape" to "افقی").forEach { (k, l) ->
-                FilterChip(selected = orient == k, onClick = { orient = k; Prefs.setStr(ctx, "pl_orient", k) }, label = { Text(l) })
-            }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            androidx.compose.material3.Switch(checked = remember == "1", onCheckedChange = { remember = if (it) "1" else "0"; Prefs.setStr(ctx, "pl_remember", remember) })
-            Spacer(Modifier.size(8.dp))
-            Text("یادآوری آخرین نقطه پخش")
-        }
+        Spacer(Modifier.height(12.dp))
+        AndroidView(
+            factory = { c ->
+                android.widget.ImageView(c).apply {
+                    scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                    try {
+                        if (android.os.Build.VERSION.SDK_INT >= 28) {
+                            val d = android.graphics.ImageDecoder.decodeDrawable(android.graphics.ImageDecoder.createSource(file)) { dec, info, _ ->
+                                val m = maxOf(info.size.width, info.size.height)
+                                if (m > 2048) {
+                                    val k = 2048f / m
+                                    dec.setTargetSize((info.size.width * k).toInt(), (info.size.height * k).toInt())
+                                }
+                            }
+                            setImageDrawable(d)
+                            if (d is android.graphics.drawable.AnimatedImageDrawable) {
+                                d.repeatCount = android.graphics.drawable.AnimatedImageDrawable.REPEAT_INFINITE
+                                d.start()
+                            }
+                        } else {
+                            val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            BitmapFactory.decodeFile(file.absolutePath, o)
+                            var k = 1
+                            while (maxOf(o.outWidth, o.outHeight) / k > 2048) k *= 2
+                            setImageBitmap(BitmapFactory.decodeFile(file.absolutePath, BitmapFactory.Options().apply { inSampleSize = k }))
+                        }
+                    } catch (_: Throwable) {
+                    }
+                }
+            },
+            onRelease = { (it.drawable as? android.graphics.drawable.AnimatedImageDrawable)?.stop() },
+            modifier = Modifier.weight(1f).fillMaxWidth()
+        )
     }
 }
