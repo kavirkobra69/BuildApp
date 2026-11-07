@@ -73,11 +73,13 @@ def analyze(pin):
         if u:
             print("orig entry:", u.group(1), w and w.group(1), hh and hh.group(1))
             cands.append(u.group(1))
-    for d in ("originals", "1200x", "736x", "564x", "474x", "236x"):
-        for u in list(sizes.get(d, []))[:1]:
-            cands.append(u)
+    ogi = [v for k, v in og if k == "image"]
+    cands = ogi[:1] + cands
+    print("VIDEO-ish keys:", sorted(set(re.findall(r'"(V_[A-Z0-9_]+)"', html)))[:12])
+    for m in list(re.finditer(r'"video_list"\s*:\s*\{', html))[:1]:
+        print("video_list:", html[m.start():m.start() + 900].replace("\n", " "))
     seen = set()
-    for c in cands[:8]:
+    for c in cands[:3]:
         if c in seen:
             continue
         seen.add(c)
