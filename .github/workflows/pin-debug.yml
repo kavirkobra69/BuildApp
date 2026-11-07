@@ -2,6 +2,11 @@ name: pin-debug
 on:
   workflow_dispatch:
     inputs:
+      script:
+        description: script
+        required: false
+        default: pin_debug.py
+        type: string
       pins:
         description: Pin URLs separated by space
         required: false
@@ -15,4 +20,4 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - run: python3 .github/scripts/pin_debug.py ${{ inputs.pins }}
+      - run: python3 .github/scripts/${{ inputs.script }} ${{ inputs.pins }}
