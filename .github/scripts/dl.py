@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import struct
 import subprocess
 import sys
 import time
@@ -270,74 +271,197 @@ def _magic_ext(path):
     return ""
 
 
-def pinterest(url):
-    kind = QUALITY if QUALITY in ("image", "gif") else "auto"
-    html, _ = fetch(url)
-    html = html.replace("\\/", "/")
-    is_video = any(k in html for k in ['"video_list"', '"V_720P"', "og:video", '"V_HLSV3', '"V_EXP'])
-    if kind == "auto" and is_video or (kind == "image" and "og:video" in html):
-        if kind == "image":
-            sys.exit("این پین ویدیوئه نه عکس. دکمه دانلود معمولی رو بزن")
-        if ytdlp(url):
-            return
-        mp4 = re.search(r"https://v\d*\.pinimg\.com[^\"\\]*?\.mp4", html)
-        if mp4:
-            save_file(mp4.group(0), OUT / "pin_video.mp4")
-            return
-        sys.exit("ویدیوی پینترست پیدا نشد")
-
-    found = []
-    for m in re.finditer(r'"orig"\s*:\s*\{([^{}]*)\}', html):
-        body = m.group(1)
-        u = re.search(r'"url"\s*:\s*"([^"]+)"', body)
-        w = re.search(r'"width"\s*:\s*(\d+)', body)
-        h = re.search(r'"height"\s*:\s*(\d+)', body)
-        if u:
-            found.append((int(w.group(1)) * int(h.group(1)) if w and h else 1, u.group(1)))
-    found.sort(key=lambda x: -x[0])
-    cands = [u for _, u in found]
-    for m in re.finditer(r'https://i\.pinimg\.com/(?:\d+x|originals)/[A-Za-z0-9/_\-]+\.(?:jpg|jpeg|png|gif|webp)', html):
-        cands.append(m.group(0))
-    og = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)', html) or re.search(
-        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', html
-    )
-    if og:
-        cands.insert(0, og.group(1).replace("&amp;", "&"))
-    if not cands:
-        sys.exit("آدرس عکس این پین پیدا نشد")
-
-    report(force=True, title="Pinterest", thumb=cands[0], percent=-1)
-    tried, chosen = set(), None
-    exts = ["gif", "jpg", "png", "webp", "jpeg"] if kind == "gif" else ["jpg", "png", "webp", "gif", "jpeg"]
-    for c in cands:
-        base = re.sub(r"pinimg\.com/\d+x/", "pinimg.com/originals/", c).rsplit(".", 1)[0]
-        own = c.rsplit(".", 1)[-1].split("?")[0].lower()
-        for e in ([own] if own in exts else []) + exts:
-            u = f"{base}.{e}"
-            if u in tried:
+def _img_info(path):
+    b = open(path, "rb").read()
+    if b[:3] == b"GIF":
+        w, h = struct.unpack("<HH", b[6:10])
+        return "gif", w, h, b.count(b"\x00\x21\xf9\x04")
+    if b[:8] == b"\x89PNG\r\n\x1a\n":
+        w, h = struct.unpack(">II", b[16:24])
+        return "png", w, h, 1
+    if b[:3] == b"\xff\xd8\xff":
+        i = 2
+        while i < len(b) - 9:
+            if b[i] != 0xFF:
+                i += 1
                 continue
-            tried.add(u)
+            m = b[i + 1]
+            if m in (0xC0, 0xC1, 0xC2):
+                h, w = struct.unpack(">HH", b[i + 5:i + 9])
+                return "jpg", w, h, 1
+            i += 2 + struct.unpack(">H", b[i + 2:i + 4])[0]
+        return "jpg", 0, 0, 1
+    if b[:4] == b"RIFF" and b[8:12] == b"WEBP":
+        t = b[12:16]
+        if t == b"VP8X":
+            return "webp", 1 + int.from_bytes(b[24:27], "little"), 1 + int.from_bytes(b[27:30], "little"), 1
+        if t == b"VP8 ":
+            w, h = struct.unpack("<HH", b[26:30])
+            return "webp", w & 0x3FFF, h & 0x3FFF, 1
+        if t == b"VP8L":
+            v = int.from_bytes(b[21:25], "little")
+            return "webp", (v & 0x3FFF) + 1, ((v >> 14) & 0x3FFF) + 1, 1
+        return "webp", 0, 0, 1
+    return "", 0, 0, 0
+
+
+def _pin_scripts(html):
+    out = []
+    for m in re.finditer(r'<script[^>]*type="application/(?:ld\+)?json"[^>]*>(.*?)</script>', html, re.S):
+        try:
+            out.append(json.loads(m.group(1)))
+        except Exception:
+            pass
+    return out
+
+
+def _pin_object(objs, pid):
+    best = [None]
+
+    def walk(o):
+        if isinstance(o, dict):
+            if pid in (str(o.get("entityId")), str(o.get("id"))) and ("images" in o or "videos" in o):
+                if best[0] is None or len(o) > len(best[0]):
+                    best[0] = o
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    for o in objs:
+        walk(o)
+    return best[0]
+
+
+def _pin_get(url, name):
+    tmp = OUT / name
+    save_file(url, tmp)
+    return tmp
+
+
+def pinterest(url):
+    sys.setrecursionlimit(10000)
+    kind = QUALITY if QUALITY in ("image", "gif") else "auto"
+    raw, final = fetch(url)
+    m = re.search(r"/pin/(?:[^/]*-)?(\d+)", final)
+    pid = m.group(1) if m else ""
+    objs = _pin_scripts(raw)
+    pin = _pin_object(objs, pid) if pid else None
+    ld_img = ld_vid = None
+    for o in objs:
+        if isinstance(o, dict):
+            t = o.get("@type")
+            if t == "SocialMediaPosting":
+                i = o.get("image")
+                ld_img = i if isinstance(i, str) else (i[0] if isinstance(i, list) and i and isinstance(i[0], str) else None)
+            elif t == "VideoObject":
+                ld_vid = o.get("contentUrl")
+    html = raw.replace("\\/", "/")
+    ogm = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)', html) or re.search(
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', html)
+    og = ogm.group(1).replace("&amp;", "&") if ogm else None
+    tm = re.search(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)', html)
+    title = (tm.group(1).split(" | ")[0] if tm else "Pinterest").replace("&amp;", "&").replace("&#x27;", "'")[:100]
+
+    images, vids = {}, []
+    if pin:
+        im = pin.get("images")
+        for k, v in (im.items() if isinstance(im, dict) else []):
+            if isinstance(v, dict) and v.get("url"):
+                images[k] = (int(v.get("width") or 0), int(v.get("height") or 0), v["url"])
+        vd = pin.get("videos")
+        vl = vd.get("video_list") if isinstance(vd, dict) else None
+        for k, v in (vl.items() if isinstance(vl, dict) else []):
+            u = v.get("url", "") if isinstance(v, dict) else ""
+            if u.split("?")[0].endswith(".mp4"):
+                vids.append((int(v.get("height") or 0), int(v.get("width") or 0), u))
+    if ld_vid and ld_vid.endswith(".mp4") and not any(u == ld_vid for _, _, u in vids):
+        vids.append((0, 0, ld_vid))
+    vids.sort(reverse=True)
+    has_video = bool(vids)
+    thumb = (images.get("736x") or images.get("474x") or (0, 0, og or ""))[2]
+    report(force=True, title=title, thumb=thumb, percent=-1)
+    print(f"pin={pid} video={has_video} sizes={sorted(images)} ld={ld_img} og={og}", flush=True)
+
+    def video():
+        if kind == "auto" and ytdlp(url):
+            return
+        if not vids:
+            sys.exit("ویدیوی پینترست پیدا نشد")
+        out = _pin_get(vids[0][2], f"pinterest_{pid or 'video'}.mp4")
+        if out.stat().st_size < 1000 or out.read_bytes()[4:8] != b"ftyp":
+            out.unlink()
+            sys.exit("فایل ویدیوی دریافتی معتبر نبود")
+
+    if has_video and kind == "auto":
+        video()
+        return
+    if has_video and kind == "image":
+        sys.exit("این پین ویدیو یا انیمیشنه و عکسش فقط تصویر پیش‌نمایشه. برای فایل متحرک دکمه GIF رو بزن")
+
+    seeds = [images[k][2] for k in images] + [u for u in (ld_img, og) if u]
+    bases, order = [], []
+    for u in seeds:
+        base = re.sub(r"pinimg\.com/[^/]+/", "pinimg.com/originals/", u).rsplit(".", 1)[0]
+        if "/originals/" in base and base not in bases:
+            bases.append(base)
+    cands = []
+    for u in ([images["orig"][2]] if "orig" in images else []) + ([ld_img] if ld_img else []):
+        if u not in cands:
+            cands.append(u)
+    exts = ["gif"] if kind == "gif" else ["jpg", "png", "webp", "gif", "jpeg"]
+    pref = [u.rsplit(".", 1)[-1].lower() for u in cands]
+    for base in bases[:1] if pid else bases:
+        for e in dict.fromkeys(pref + exts):
             if kind == "gif" and e != "gif":
                 continue
-            if _pin_probe(u):
-                chosen = u
-                break
-        if chosen:
+            u = f"{base}.{e}"
+            if u not in cands:
+                cands.append(u)
+    if kind == "gif":
+        cands = [u for u in cands if u.lower().split("?")[0].endswith(".gif")]
+
+    chosen = None
+    for c in cands:
+        if _pin_probe(c):
+            chosen = c
             break
+    if kind == "gif":
+        if chosen:
+            tmp = _pin_get(chosen, "pin_tmp")
+            ext, w, h, frames = _img_info(tmp)
+            if ext == "gif" and frames >= 2:
+                tmp.rename(OUT / f"pinterest_{pid or 'gif'}.gif")
+                print(f"GIF {w}x{h} frames={frames}", flush=True)
+                return
+            tmp.unlink()
+            sys.exit("فایل GIF این پین انیمیشن نداره (فقط یک فریمه)")
+        if has_video:
+            report(force=True, title=title + " (ویدیوی متحرک؛ GIF واقعی وجود نداره)", thumb=thumb, percent=-1)
+            video()
+            return
+        sys.exit("GIF اصلی برای این پین در دسترس نیست؛ فایل متحرکی پیدا نشد")
+
     if not chosen:
-        if kind == "gif":
-            sys.exit("برای این پین GIF اصلی قابل دسترسی نیست")
         sys.exit("نسخه اصلی عکس قابل دسترسی نیست؛ برای جلوگیری از دریافت نسخه کم‌کیفیت دانلود انجام نشد")
-    tmp = OUT / "pin_image.tmp"
-    save_file(chosen, tmp)
-    ext = _magic_ext(tmp)
+    tmp = _pin_get(chosen, "pin_tmp")
+    ext, w, h, frames = _img_info(tmp)
     if not ext:
         tmp.unlink()
         sys.exit("فایل دریافتی عکس معتبر نبود")
-    if kind == "gif" and ext != "gif":
-        tmp.unlink()
-        sys.exit("برای این پین GIF اصلی قابل دسترسی نیست")
-    tmp.rename(OUT / f"pin_image.{ext}")
+    listed = max(images.values(), key=lambda t: t[0] * t[1], default=None)
+    if listed and listed[0] * listed[1] > w * h > 0:
+        alt = _pin_get(listed[2], "pin_alt")
+        e2, w2, h2, _ = _img_info(alt)
+        if e2 and w2 * h2 > w * h:
+            print(f"listed {listed[0]}x{listed[1]} larger than original {w}x{h}; using it", flush=True)
+            tmp.unlink()
+            tmp, ext, w, h = alt, e2, w2, h2
+        else:
+            alt.unlink()
+    print(f"IMAGE {ext} {w}x{h} from {chosen}", flush=True)
+    tmp.rename(OUT / f"pinterest_{pid or 'image'}.{ext}")
 
 
 def main():

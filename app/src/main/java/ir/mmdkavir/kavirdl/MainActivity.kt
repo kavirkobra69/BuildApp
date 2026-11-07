@@ -22,6 +22,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -44,6 +48,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.HighQuality
+import androidx.compose.material.icons.filled.Hd
+import androidx.compose.material.icons.filled.Sd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.PlayArrow
@@ -222,21 +229,13 @@ fun Home(vm: MainVM) {
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                listOf("best" to "بهترین", "1080" to "1080", "720" to "720", "480" to "480", "audio" to "فقط صدا (mp3)").forEach { (k, label) ->
-                    val sel = vm.quality == k
-                    FilterChip(
-                        selected = sel,
-                        onClick = { vm.pickQuality(k) },
-                        label = { Text(label, fontWeight = if (sel) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal) },
-                        leadingIcon = if (sel) ({ Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }) else null,
-                        shape = RoundedCornerShape(14.dp),
-                        colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = MaterialTheme.colorScheme.primary,
-                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                            selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary
-                        )
-                    )
-                }
+                listOf(
+                    Triple("best", "بهترین", "خودکار") to Icons.Default.HighQuality,
+                    Triple("1080", "1080p", "Full HD") to Icons.Default.Hd,
+                    Triple("720", "720p", "HD") to Icons.Default.Hd,
+                    Triple("480", "480p", "SD") to Icons.Default.Sd,
+                    Triple("audio", "MP3", "فقط صدا") to Icons.Default.MusicNote
+                ).forEach { (t, icon) -> QualityCard(t.second, t.third, icon, vm.quality == t.first) { vm.pickQuality(t.first) } }
             }
             Spacer(Modifier.height(8.dp))
             Button(onClick = { vm.start() }, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) {
@@ -317,6 +316,30 @@ fun Home(vm: MainVM) {
                 }
             }
         }
+    }
+}
+
+@Composable
+fun QualityCard(title: String, sub: String, icon: androidx.compose.ui.graphics.vector.ImageVector, selected: Boolean, onClick: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    val bg by androidx.compose.animation.animateColorAsState(if (selected) cs.primary else cs.surfaceContainerHigh, label = "qbg")
+    val fg by androidx.compose.animation.animateColorAsState(if (selected) cs.onPrimary else cs.onSurface, label = "qfg")
+    val scale by androidx.compose.animation.core.animateFloatAsState(if (selected) 1f else 0.96f, label = "qs")
+    Column(
+        Modifier
+            .width(84.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(RoundedCornerShape(16.dp))
+            .background(bg)
+            .border(1.dp, if (selected) cs.primary else cs.outlineVariant, RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp, horizontal = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(if (selected) Icons.Default.Check else icon, contentDescription = null, tint = fg, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.height(4.dp))
+        Text(title, color = fg, style = MaterialTheme.typography.titleSmall, maxLines = 1)
+        Text(sub, color = fg.copy(alpha = 0.8f), style = MaterialTheme.typography.labelSmall, maxLines = 1)
     }
 }
 
