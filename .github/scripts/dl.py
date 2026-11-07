@@ -59,8 +59,11 @@ def report(force=False, **kw):
         print("report failed:", e)
 
 
-def fetch(url):
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"})
+MOBILE_UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+
+
+def fetch(url, ua=None):
+    req = urllib.request.Request(url, headers={"User-Agent": ua or UA, "Accept-Language": "en-US,en;q=0.9"})
     with urllib.request.urlopen(req, timeout=30) as r:
         return r.read().decode("utf-8", "replace"), r.geturl()
 
@@ -343,20 +346,24 @@ def _pin_get(url, name):
 def pinterest(url):
     sys.setrecursionlimit(10000)
     kind = QUALITY if QUALITY in ("image", "gif") else "auto"
-    raw, final = fetch(url)
-    m = re.search(r"/pin/(?:[^/]*-)?(\d+)", final)
-    pid = m.group(1) if m else ""
-    objs = _pin_scripts(raw)
-    pin = _pin_object(objs, pid) if pid else None
-    ld_img = ld_vid = None
-    for o in objs:
-        if isinstance(o, dict):
-            t = o.get("@type")
-            if t == "SocialMediaPosting":
-                i = o.get("image")
-                ld_img = i if isinstance(i, str) else (i[0] if isinstance(i, list) and i and isinstance(i[0], str) else None)
-            elif t == "VideoObject":
-                ld_vid = o.get("contentUrl")
+    pid, pin, ld_img, ld_vid, raw = "", None, None, None, ""
+    for ua in (MOBILE_UA, UA):
+        raw, final = fetch(url, ua)
+        m = re.search(r"/pin/(?:[^/]*-)?(\d+)", final)
+        pid = m.group(1) if m else ""
+        objs = _pin_scripts(raw)
+        pin = _pin_object(objs, pid) if pid else None
+        ld_img = ld_vid = None
+        for o in objs:
+            if isinstance(o, dict):
+                t = o.get("@type")
+                if t == "SocialMediaPosting":
+                    i = o.get("image")
+                    ld_img = i if isinstance(i, str) else (i[0] if isinstance(i, list) and i and isinstance(i[0], str) else None)
+                elif t == "VideoObject":
+                    ld_vid = o.get("contentUrl")
+        if pin or ld_img:
+            break
     html = raw.replace("\\/", "/")
     ogm = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)', html) or re.search(
         r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', html)
@@ -460,6 +467,16 @@ def pinterest(url):
             tmp, ext, w, h = alt, e2, w2, h2
         else:
             alt.unlink()
+    if ext == "gif" and not chosen.lower().split("?")[0].endswith(".gif"):
+        gu = chosen.rsplit(".", 1)[0] + ".gif"
+        if _pin_probe(gu):
+            g = _pin_get(gu, "pin_gif")
+            e3, w3, h3, f3 = _img_info(g)
+            if e3 == "gif" and w3 * h3 >= w * h:
+                tmp.unlink()
+                tmp, ext, w, h = g, e3, w3, h3
+            else:
+                g.unlink()
     print(f"IMAGE {ext} {w}x{h} from {chosen}", flush=True)
     tmp.rename(OUT / f"pinterest_{pid or 'image'}.{ext}")
 
